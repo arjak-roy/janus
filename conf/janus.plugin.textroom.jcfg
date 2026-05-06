@@ -1,0 +1,12 @@
+general: {
+	# Admin API for TextRoom plugin
+	# admin_key = "supersecret"
+}
+
+# Rooms are created dynamically by the backend.
+# To pre-create a static room, uncomment and edit below:
+# room-1234: {
+# 	description = "Demo Chat Classroom"
+# 	is_private = false
+# 	history = 100
+# }

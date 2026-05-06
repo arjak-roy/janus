@@ -1,0 +1,32 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Room {
+  id          String    @id @default(uuid())
+  janusId     Int       @unique
+  name        String
+  description String?
+  isPrivate   Boolean   @default(false)
+  maxUsers    Int       @default(6)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  messages    Message[]
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  roomId    String
+  sender    String
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([roomId])
+}

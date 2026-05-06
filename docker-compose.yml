@@ -1,0 +1,79 @@
+services:
+  janus-gateway:
+    image: 'sucwangsr/janus-webrtc-gateway-docker:latest'
+    container_name: janus-gateway
+    restart: unless-stopped
+    ports:
+      - "8088:8088"    # HTTP transport
+      - "8188:8188"    # WebSocket transport
+      - "20000-20255:20000-20255/udp"  # RTP/RTCP media ports
+      - "20000-20255:20000-20255/tcp"  # ICE-TCP fallback ports
+    environment:
+      - JANUS_NAT_1_1_IP=${JANUS_NAT_1_1_IP:-}
+    volumes:
+      - ./conf/janus.jcfg:/usr/local/etc/janus/janus.jcfg
+      - ./conf/janus.transport.websockets.jcfg:/usr/local/etc/janus/janus.transport.websockets.jcfg
+      - ./conf/janus.plugin.videoroom.jcfg:/usr/local/etc/janus/janus.plugin.videoroom.jcfg
+      - ./conf/janus.plugin.textroom.jcfg:/usr/local/etc/janus/janus.plugin.textroom.jcfg
+    command: ["/usr/local/bin/janus", "-F", "/usr/local/etc/janus"]
+
+  db:
+    image: postgres:15-alpine
+    container_name: janus-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: janus-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - JANUS_API_SECRET=${JANUS_API_SECRET}
+      - JANUS_ADMIN_SECRET=${JANUS_ADMIN_SECRET}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
+    depends_on:
+      janus-gateway:
+        condition: service_started
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: janus-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+      - "3001:443"
+    depends_on:
+      backend:
+        condition: service_healthy
+      janus-gateway:
+        condition: service_started
+
+volumes:
+  postgres_data:

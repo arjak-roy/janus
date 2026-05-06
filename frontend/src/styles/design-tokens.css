@@ -1,0 +1,27 @@
+:root {
+  /* Brand Colors */
+  --primary: #4F46E5;
+  --primary-hover: #4338CA;
+  --bg-dark: #0F172A;
+  --bg-panel: rgba(30, 41, 59, 0.7);
+  
+  /* Text */
+  --text-light: #F8FAFC;
+  --text-muted: #94A3B8;
+  
+  /* Spacing */
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  
+  /* Borders & Radius */
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  
+  /* Effects */
+  --glass-blur: 12px;
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+}

@@ -1,0 +1,21 @@
+{
+  "name": "janus-backend",
+  "version": "1.0.0",
+  "description": "Backend for Janus Video Classroom",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "npx prisma db push && node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.10.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.2.0",
+    "express-ws": "^5.0.2"
+  },
+  "devDependencies": {
+    "prisma": "^5.10.0"
+  }
+}

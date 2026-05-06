@@ -1,0 +1,19 @@
+general: {
+	# Admin API for VideoRoom plugin
+	# admin_key = "supersecret"
+
+	# Default bitrate for dynamically created rooms (512 kbps)
+	# Override per-room via the backend room creation API.
+}
+
+# Rooms are created dynamically by the backend.
+# To pre-create a static room, uncomment and edit below:
+# room-1234: {
+# 	description = "Demo Video Classroom"
+# 	is_private = false
+# 	max_publishers = 6
+# 	bitrate = 512000
+# 	fir_freq = 10
+# 	audiocodec = "opus"
+# 	videocodec = "vp8"
+# }
