@@ -270,3 +270,57 @@
     align-items: flex-start;
   }
 }
+
+@media (max-width: 600px) {
+  .meet-hero-image {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .meet-header {
+    padding: 12px 16px;
+  }
+
+  .meet-main-content {
+    padding: 24px 16px;
+    gap: 24px;
+  }
+
+  .meet-hero-text h1 {
+    font-size: 28px;
+  }
+
+  .meet-hero-text p {
+    font-size: 15px;
+    margin-bottom: 32px;
+  }
+
+  .meet-action-area {
+    gap: 16px;
+    width: 100%;
+  }
+
+  .meet-new-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .meet-join-form {
+    width: 100%;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .meet-join-input {
+    width: 100%;
+  }
+
+  .meet-logo {
+    font-size: 18px;
+  }
+
+  .meet-time {
+    font-size: 14px;
+  }
+}

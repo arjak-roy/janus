@@ -611,3 +611,209 @@
   from { transform: translateX(20px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
+
+/* ══════════════════════════════════════════════════════════
+   RESPONSIVE — Tablet (≤768px)
+   ══════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .meet-classroom {
+    touch-action: manipulation;
+  }
+
+  /* ── Layout stacking ── */
+  .meet-main {
+    flex-direction: column;
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .meet-presentation-stage {
+    flex: none;
+    height: 50vh;
+  }
+
+  .meet-videos-container {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .meet-videos-container.sidebar-mode {
+    flex: 1;
+    min-height: 120px;
+  }
+
+  /* ── Video Grid ── */
+  .video-grid:not(.video-grid--presentation) {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-auto-rows: minmax(120px, 1fr);
+  }
+
+  .video-grid--presentation {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    grid-auto-rows: minmax(100px, auto);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-right: 0;
+  }
+
+  /* ── Bottom Bar ── */
+  .meet-bottom-bar {
+    padding: 10px 12px;
+  }
+
+  .meet-bottom-bar__left {
+    display: none;
+  }
+
+  .meet-bottom-bar__center {
+    gap: 8px;
+  }
+
+  .meet-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .meet-btn--leave {
+    width: 52px;
+  }
+
+  .meet-bottom-bar__right {
+    width: auto;
+    gap: 8px;
+  }
+
+  /* ── Sidebar — full-screen overlay ── */
+  .meet-sidebar {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    z-index: 100;
+    animation: slideUp 0.25s ease;
+  }
+
+  .meet-sidebar__header {
+    padding: 12px 16px;
+  }
+
+  .icon-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* ── Chat input — prevent iOS zoom ── */
+  .meet-chat__input input {
+    font-size: 16px;
+  }
+
+  .meet-chat__input {
+    padding: 12px 16px;
+  }
+
+  .meet-chat__messages {
+    padding: 12px 16px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   RESPONSIVE — Phone (≤480px)
+   ══════════════════════════════════════════════════════════ */
+@media (max-width: 480px) {
+  .meet-main {
+    padding: 4px;
+    gap: 4px;
+  }
+
+  .meet-presentation-stage {
+    height: 45vh;
+  }
+
+  /* ── Video Grid ── */
+  .video-grid:not(.video-grid--presentation) {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    grid-auto-rows: minmax(90px, 1fr);
+    gap: 4px;
+  }
+
+  .video-grid--presentation {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    grid-auto-rows: minmax(80px, auto);
+    gap: 4px;
+  }
+
+  /* ── Bottom Bar ── */
+  .meet-bottom-bar {
+    padding: 8px;
+  }
+
+  .meet-bottom-bar__center {
+    gap: 6px;
+  }
+
+  .meet-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .meet-btn__icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .meet-btn--leave {
+    width: 48px;
+  }
+
+  .meet-btn--small {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* ── Tile info — smaller on tiny screens ── */
+  .video-tile__info {
+    bottom: 6px;
+    left: 6px;
+    padding: 2px 6px;
+  }
+
+  .video-tile__name {
+    font-size: 11px;
+  }
+
+  /* ── Pinned video controls ── */
+  .unpin-button {
+    top: 8px;
+    right: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  /* ── Hand raise badge ── */
+  .hand-raise-badge {
+    width: 26px;
+    height: 26px;
+    top: 6px;
+    right: 6px;
+  }
+  .hand-raise-badge svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  /* ── Notice toast ── */
+  .meet-notice {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    transform: none;
+    font-size: 0.8rem;
+    padding: 8px 12px;
+  }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}

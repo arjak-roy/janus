@@ -4,7 +4,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
-RUN npm run build
+# This limits Node to 512MB of RAM, relying on your new swap file
+# Change the 512 to 2048
+RUN NODE_OPTIONS="--max-old-space-size=2048" npm run build
 
 # Production stage
 FROM nginx:alpine

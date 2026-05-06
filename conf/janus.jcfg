@@ -15,34 +15,10 @@ general: {
 }
 
 nat: {
-	# NAT 1:1 mapping — set JANUS_NAT_1_1_IP in .env to your host LAN IP.
-	# Leave empty/unset to let Janus auto-detect (fine for LAN-only setups).
-	# nat_1_1_mapping = "SET_VIA_ENV"
-
-	# STUN for Janus server-side ICE — only needed for public-facing deployments.
-	# Disabled by default because Docker containers often can't reach public STUN.
-	# The browser clients already use their own STUN/TURN via JanusService.js.
-	# stun_server = "stun.l.google.com"
-	# stun_port = 19302
-
-	# TURN for Janus — enable for internet-facing deployments.
-	# Set these values via environment variables or edit directly.
-	# turn_server = "your-turn-server.example.com"
-	# turn_port = 443
-	# turn_type = "udp"
-	# turn_user = "your_turn_username"
-	# turn_pwd = "your_turn_password"
-
-	nice_debug = false
-
-	# ICE-TCP allows bypassing restrictive UDP firewalls
-	ice_tcp = true
-
-	# RTP port range — keep in sync with docker-compose and firewall rules.
-	# Wider range improves reliability for multi-user rooms and screen sharing.
-	rtp_port_range = "20000-20255"
+    stun_server = "stun.l.google.com"
+    stun_port = 19302
+    nat_1_1_mapping = "13.51.211.112" 
 }
-
 media: {
 	# This is where you configure media settings. We use defaults.
 }

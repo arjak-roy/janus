@@ -168,7 +168,7 @@ export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
         ...extractSharedAppState(api.getAppState()),
         ...incomingAppState
       },
-      captureUpdate: CaptureUpdateAction.NEVER
+      captureUpdate: CaptureUpdateAction.EVENTUALLY
     });
     isApplyingRemote.current = false;
 
