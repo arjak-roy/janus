@@ -652,6 +652,12 @@ class JanusService {
     }
     this._signalWsReady = false;
 
+    // Stop local camera/mic tracks to release the camera
+    if (this.myStream) {
+      this.myStream.getTracks().forEach((t) => t.stop());
+      this.myStream = null;
+    }
+
     // Stop screen share tracks locally
     if (this.screenStream) {
       this.screenStream.getTracks().forEach((t) => t.stop());

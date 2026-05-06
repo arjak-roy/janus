@@ -1,7 +1,8 @@
 :root {
   /* Brand Colors */
-  --primary: #4F46E5;
-  --primary-hover: #4338CA;
+  --primary: #1a73e8;
+  --primary-hover: #1765cc;
+  --brand-accent: #0f9d58;
   --bg-dark: #0F172A;
   --bg-panel: rgba(30, 41, 59, 0.7);
   

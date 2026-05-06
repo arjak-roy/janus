@@ -1,6 +1,6 @@
 export const PORT = Number(process.env.PORT || 8080);
 
-export const JANUS_HTTP = process.env.JANUS_HTTP_URL || 'http://janus-gateway:8088/janus';
+export const JANUS_HTTP = process.env.JANUS_HTTP_URL || 'http://172.28.0.1:8088/janus';
 export const JANUS_API_SECRET = process.env.JANUS_API_SECRET || '';
 
 export const ROOM_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;

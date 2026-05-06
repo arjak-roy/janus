@@ -21,6 +21,9 @@ const IconHandRaise = () => (<svg width="20" height="20" viewBox="0 0 24 24" fil
 const IconPin = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.89A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.89A2 2 0 0 0 5 15.24z"/></svg>);
 const IconUnpin = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.89A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.89A2 2 0 0 0 5 15.24z"/><line x1="2" y1="2" x2="22" y2="22"/></svg>);
 const IconWarning = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>);
+const IconLayoutAuto = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/><line x1="3" y1="12" x2="12" y2="12"/></svg>);
+const IconLayoutGrid = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>);
+const IconLayoutSpotlight = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="8" height="18" rx="1"/><rect x="13" y="3" width="8" height="18" rx="1"/></svg>);
 
 function resolveBackendUrl() {
   const configured = (import.meta.env.VITE_BACKEND_URL || '').trim();
@@ -52,7 +55,7 @@ export default function Classroom() {
   const [activeSidebar, setActiveSidebar] = useState(null); // 'chat' | 'people' | null
   const [showWhiteboard, setShowWhiteboard] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
-
+  const [layoutMode, setLayoutMode] = useState('auto'); // 'auto' | 'grid' | 'spotlight'
   // Chat state
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -402,9 +405,16 @@ export default function Classroom() {
   }, [remoteFeeds, screenShareFeeds, pinnedFeed]);
 
   const renderVideoGrid = () => {
+    // Determine effective layout
+    const effectiveLayout = pinnedFeed ? 'pin' : layoutMode;
     let gridClass = 'video-grid';
-    if (hasPresentation) {
+
+    if (hasPresentation && effectiveLayout !== 'grid') {
       gridClass += ' video-grid--presentation';
+    } else if (effectiveLayout === 'grid') {
+      gridClass += ' video-grid--grid';
+    } else if (effectiveLayout === 'spotlight') {
+      gridClass += ' video-grid--spotlight';
     } else {
       gridClass += ` video-grid--${Math.min(totalFeeds, 6)}`;
     }
@@ -501,7 +511,7 @@ export default function Classroom() {
 
         {/* Right Sidebar */}
         {activeSidebar && (
-          <div className="meet-sidebar glass-panel">
+          <div className="meet-sidebar">
             <div className="meet-sidebar__header">
               <h3>{activeSidebar === 'chat' ? 'In-call messages' : 'People'}</h3>
               <button className="icon-button" onClick={() => setActiveSidebar(null)}><IconClose /></button>
@@ -517,13 +527,18 @@ export default function Classroom() {
                   )}
                   {messages.map((m, i) => (
                     <div key={i} className={`chat-message ${m.self ? 'chat-message--self' : ''}`}>
-                      <div className="chat-message__header">
-                        <span className="chat-message__sender">{m.self ? 'You' : m.sender}</span>
+                      {!m.self && (
+                        <div className="chat-message__avatar">
+                          {(m.sender || 'P').charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="chat-message__content">
+                        {!m.self && <span className="chat-message__sender">{m.sender}</span>}
+                        <div className="chat-message__bubble">{DOMPurify.sanitize(m.content)}</div>
                         <span className="chat-message__time">
                           {new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                         </span>
                       </div>
-                      <div className="chat-message__body">{DOMPurify.sanitize(m.content)}</div>
                     </div>
                   ))}
                   <div ref={chatEndRef} />
@@ -572,6 +587,8 @@ export default function Classroom() {
       {/* Bottom Control Bar */}
       <div className="meet-bottom-bar">
         <div className="meet-bottom-bar__left">
+          <span className="meet-bottom-brand"><strong>GTS</strong> Meet</span>
+          <span className="divider">|</span>
           <span className="time-display">{currentTime}</span>
           <span className="divider">|</span>
           <span className="room-id">{roomId}</span>
@@ -603,6 +620,31 @@ export default function Classroom() {
         </div>
 
         <div className="meet-bottom-bar__right">
+          {/* Layout mode toggle */}
+          <div className="layout-toggle">
+            <button
+              className={`meet-btn meet-btn--small ${layoutMode === 'auto' ? 'meet-btn--active' : ''}`}
+              onClick={() => { setLayoutMode('auto'); setPinnedFeed(null); }}
+              title="Auto layout"
+            >
+              <span className="meet-btn__icon"><IconLayoutAuto /></span>
+            </button>
+            <button
+              className={`meet-btn meet-btn--small ${layoutMode === 'grid' ? 'meet-btn--active' : ''}`}
+              onClick={() => { setLayoutMode('grid'); setPinnedFeed(null); }}
+              title="Grid view"
+            >
+              <span className="meet-btn__icon"><IconLayoutGrid /></span>
+            </button>
+            <button
+              className={`meet-btn meet-btn--small ${layoutMode === 'spotlight' ? 'meet-btn--active' : ''}`}
+              onClick={() => { setLayoutMode('spotlight'); setPinnedFeed(null); }}
+              title="Spotlight (side by side)"
+            >
+              <span className="meet-btn__icon"><IconLayoutSpotlight /></span>
+            </button>
+          </div>
+          <span className="divider">|</span>
           <button className={`meet-btn meet-btn--small ${activeSidebar === 'people' ? 'meet-btn--active' : ''}`} onClick={() => toggleSidebar('people')} title="Show everyone">
             <span className="meet-btn__icon"><IconPeople /></span>
             {raisedHandCount > 0 && activeSidebar !== 'people' && <span className="notification-badge">{raisedHandCount}</span>}

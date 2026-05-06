@@ -64,8 +64,8 @@ export default function Dashboard() {
     <div className="meet-dashboard">
       <header className="meet-header">
         <div className="meet-logo">
-          <span className="meet-logo-icon">🎥</span>
-          <span className="meet-logo-text">Janus Meet</span>
+          <span className="meet-logo-brand">GTS</span>
+          <span className="meet-logo-text">Meet</span>
         </div>
         <div className="meet-header-right">
           <span className="meet-time">{currentTime}</span>
@@ -75,12 +75,15 @@ export default function Dashboard() {
       <main className="meet-main-content">
         <div className="meet-hero-text">
           <h1>Premium video meetings.<br/>Now available for your team.</h1>
-          <p>We re-engineered the service we built for secure business meetings, Janus Meet, to make it free and available for all.</p>
+          <p>Secure, high-quality video conferencing built for teams. Start or join a meeting instantly with GTS Meet.</p>
           
           <div className="meet-action-area">
             <button className="meet-new-btn" onClick={handleCreateRoom} disabled={loading}>
-              <span className="meet-new-btn-icon">+</span>
-              {loading ? 'Creating...' : 'New meeting'}
+              {loading ? (
+                <><span className="meet-spinner"></span> Creating...</>
+              ) : (
+                <><span className="meet-new-btn-icon">＋</span> New meeting</>
+              )}
             </button>
             
             <form className="meet-join-form" onSubmit={handleJoinById}>
@@ -100,7 +103,7 @@ export default function Dashboard() {
           </div>
           
           <div className="meet-divider"></div>
-          <p className="meet-learn-more"><a href="#">Learn more</a> about Janus Meet</p>
+          <p className="meet-learn-more"><a href="#">Learn more</a> about GTS Meet</p>
         </div>
 
         <div className="meet-hero-image">

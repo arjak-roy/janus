@@ -60,7 +60,11 @@ function getChangedElements(previousElements = [], nextElements = []) {
 
     const hasChanged = previousElement.version !== nextElement.version
       || previousElement.versionNonce !== nextElement.versionNonce
-      || previousElement.isDeleted !== nextElement.isDeleted;
+      || previousElement.isDeleted !== nextElement.isDeleted
+      || previousElement.updated !== nextElement.updated
+      || (previousElement.points?.length || 0) !== (nextElement.points?.length || 0)
+      || previousElement.width !== nextElement.width
+      || previousElement.height !== nextElement.height;
 
     if (hasChanged) {
       changed.push(nextElement);
@@ -85,11 +89,9 @@ function getReferencedFiles(elements, files) {
 export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
   const excalidrawApiRef = useRef(null);
   const isApplyingRemote = useRef(false);
-  const pendingElements = useRef(new Map());
-  const pendingFiles = useRef({});
-  const pendingAppState = useRef(null);
+  const lastSentElements = useRef(new Map());
   const lastScene = useRef(getCachedScene(roomId));
-  const rafRef = useRef(null);
+  const pollIntervalRef = useRef(null);
   const hasRequestedSnapshot = useRef(false);
   const lastSnapshotAtRef = useRef(0);
 
@@ -108,45 +110,50 @@ export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
   }, [roomId]);
 
   const flushChanges = useCallback(() => {
-    rafRef.current = null;
-    if (
-      pendingElements.current.size === 0
-      && Object.keys(pendingFiles.current).length === 0
-      && !pendingAppState.current
-    ) {
-      return;
+    const api = excalidrawApiRef.current;
+    if (!api || isApplyingRemote.current) return;
+
+    const nextElements = api.getSceneElementsIncludingDeleted();
+    const nextFiles = cloneFiles(api.getFiles());
+    const nextAppState = extractSharedAppState(api.getAppState());
+
+    // Detect changes by comparing serialized element snapshots
+    const changedElements = [];
+    for (const el of nextElements) {
+      const prev = lastSentElements.current.get(el.id);
+      const serialized = JSON.stringify(el);
+      if (prev !== serialized) {
+        changedElements.push(el);
+        lastSentElements.current.set(el.id, serialized);
+      }
     }
 
-    const elements = Array.from(pendingElements.current.values());
-    const files = cloneFiles(pendingFiles.current);
-    const appState = pendingAppState.current;
+    const hasAppStateChange = lastScene.current.appState?.viewBackgroundColor !== nextAppState.viewBackgroundColor;
 
-    pendingElements.current.clear();
-    pendingFiles.current = {};
-    pendingAppState.current = null;
+    if (changedElements.length === 0 && !hasAppStateChange) return;
+
+    lastScene.current = { elements: nextElements, files: nextFiles, appState: nextAppState };
+    sceneCache.set(String(roomId), lastScene.current);
 
     sendSignal({
       type: 'wb-delta',
-      elements,
-      files,
-      appState
+      elements: changedElements,
+      files: getReferencedFiles(changedElements, nextFiles),
+      appState: hasAppStateChange ? nextAppState : undefined
     });
 
-    // Periodic full snapshots help late joiners converge even if only deltas were emitted.
+    // Periodic full snapshots for late joiners
     const now = Date.now();
     if (now - lastSnapshotAtRef.current >= 2000) {
-      const api = excalidrawApiRef.current;
-      if (api) {
-        sendSignal({
-          type: 'wb-snapshot',
-          elements: api.getSceneElementsIncludingDeleted(),
-          files: cloneFiles(api.getFiles()),
-          appState: extractSharedAppState(api.getAppState())
-        });
-        lastSnapshotAtRef.current = now;
-      }
+      sendSignal({
+        type: 'wb-snapshot',
+        elements: nextElements,
+        files: nextFiles,
+        appState: nextAppState
+      });
+      lastSnapshotAtRef.current = now;
     }
-  }, [sendSignal]);
+  }, [sendSignal, roomId]);
 
   const applyRemoteScene = useCallback((incomingElements = [], incomingFiles = {}, incomingAppState = {}) => {
     const api = excalidrawApiRef.current;
@@ -168,8 +175,14 @@ export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
         ...extractSharedAppState(api.getAppState()),
         ...incomingAppState
       },
-      captureUpdate: CaptureUpdateAction.EVENTUALLY
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY
     });
+
+    // Update lastSentElements so the poller doesn't echo back remote changes
+    for (const el of mergedElements) {
+      lastSentElements.current.set(el.id, JSON.stringify(el));
+    }
+
     isApplyingRemote.current = false;
 
     const snapshot = {
@@ -237,7 +250,7 @@ export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
 
   useEffect(() => {
     return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
   }, []);
 
@@ -245,46 +258,33 @@ export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
     excalidrawApiRef.current = api;
     syncCacheFromApi();
 
+    // Initialize lastSentElements from current scene
+    const els = api.getSceneElementsIncludingDeleted();
+    for (const el of els) {
+      lastSentElements.current.set(el.id, JSON.stringify(el));
+    }
+
+    // Start polling for changes every 50ms
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    pollIntervalRef.current = setInterval(flushChanges, 50);
+
     if (!hasRequestedSnapshot.current) {
       hasRequestedSnapshot.current = true;
       sendSignal({ type: 'wb-request-snapshot' });
     }
-  }, [sendSignal, syncCacheFromApi]);
+  }, [sendSignal, syncCacheFromApi, flushChanges]);
 
-  const handleChange = useCallback((_elements, appState) => {
+  const handleChange = useCallback((_elements, _appState) => {
+    // The polling interval handles all sync; onChange just updates cache
     if (isApplyingRemote.current || !excalidrawApiRef.current) return;
-
     const api = excalidrawApiRef.current;
-    const nextElements = api.getSceneElementsIncludingDeleted();
-    const nextFiles = cloneFiles(api.getFiles());
-    const nextSharedAppState = extractSharedAppState(appState);
-    const changedElements = getChangedElements(lastScene.current.elements, nextElements);
-    const hasAppStateChange = lastScene.current.appState.viewBackgroundColor !== nextSharedAppState.viewBackgroundColor;
-
     lastScene.current = {
-      elements: nextElements,
-      files: nextFiles,
-      appState: nextSharedAppState
+      elements: api.getSceneElementsIncludingDeleted(),
+      files: cloneFiles(api.getFiles()),
+      appState: extractSharedAppState(_appState)
     };
     sceneCache.set(String(roomId), lastScene.current);
-
-    if (changedElements.length === 0 && !hasAppStateChange) return;
-
-    for (const element of changedElements) {
-      pendingElements.current.set(element.id, element);
-    }
-
-    pendingFiles.current = {
-      ...pendingFiles.current,
-      ...getReferencedFiles(changedElements, nextFiles)
-    };
-    if (hasAppStateChange) {
-      pendingAppState.current = nextSharedAppState;
-    }
-
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(flushChanges);
-  }, [flushChanges, roomId]);
+  }, [roomId]);
 
   const initialScene = getCachedScene(roomId);
 
