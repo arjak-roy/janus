@@ -1,6 +1,6 @@
 # Deployment
 
-Deployment guidance for LAN and production-like environments.
+Deployment guidance for GTS Meet in LAN and production-like environments.
 
 ## Contents
 

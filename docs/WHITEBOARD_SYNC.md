@@ -38,26 +38,26 @@ Message envelope (when sent over signaling channel):
 
 ## Local Change Pipeline
 
-1. User edits whiteboard scene.
-2. Component computes changed elements against `lastScene`.
-3. Changed elements are staged in pending maps.
-4. Batch flush occurs on `requestAnimationFrame`.
-5. Send `wb-delta` with changed elements/files/appState.
-6. Every ~2 seconds, send full `wb-snapshot` for convergence.
+1. Excalidraw `onChange` fires on element creation/stroke finalization (not mid-stroke in v0.18).
+2. A 50ms `setInterval` poll compares each scene element's JSON against a `lastSentElements` Map.
+3. Changed elements (new or modified JSON) are collected as a delta batch.
+4. Delta is sent as `wb-delta` over the signaling channel.
+5. `lastSentElements` Map is updated with the new JSON strings.
 
 Benefits:
-- lower signaling noise than full snapshot on every stroke
-- periodic snapshot helps late joiners and missed-delta recovery
+- Reliable detection regardless of Excalidraw callback timing
+- 50ms interval balances latency vs network overhead
+- JSON.stringify comparison catches any property change including position, style, version
 
 ## Remote Merge Strategy
 
-Incoming element reconciliation:
-- build map by `element.id`
-- compare local vs incoming by `version`
-- if same version, compare `versionNonce`
-- keep newer element
+Remote incoming elements are applied using `excalidrawAPI.updateScene()` with `CaptureUpdateAction.IMMEDIATELY`.
 
-This behaves like last-writer-wins with version guards.
+Reconciliation strategy:
+- Build map by `element.id`
+- Merge remote elements over local (last-writer-wins by arrival)
+- Update `lastSentElements` Map for merged elements to prevent echo
+- Set `isApplyingRemote` ref during merge to suppress re-sending received elements
 
 File reconciliation:
 - merged by key (`fileId`) over local files map
@@ -84,14 +84,13 @@ sequenceDiagram
   participant Signal as Signaling Channel
   participant Remote as Remote Whiteboard
 
-  Local->>Local: detect changed elements
-  Local->>Signal: send wb-delta
-  Signal->>Remote: fan out wb-delta
-  Remote->>Remote: merge by version/versionNonce
-
-  loop every ~2s while active edits
-    Local->>Signal: send wb-snapshot
-    Signal->>Remote: fan out wb-snapshot
+  loop every 50ms
+    Local->>Local: poll scene, compare JSON per element
+    alt elements changed
+      Local->>Signal: send wb-delta
+      Signal->>Remote: fan out wb-delta
+      Remote->>Remote: merge and update scene
+    end
   end
 
   Remote->>Signal: optional wb-request-snapshot

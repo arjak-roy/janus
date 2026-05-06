@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-Frontend runtime architecture for classroom UI, Janus session handling, and collaboration wiring.
+Frontend runtime architecture for GTS Meet classroom UI, Janus session handling, and collaboration wiring.
 
 ## Contents
 
@@ -9,8 +9,10 @@ Frontend runtime architecture for classroom UI, Janus session handling, and coll
 3. [Component Structure](#component-structure)
 4. [JanusService Lifecycle](#janusservice-lifecycle)
 5. [Classroom Runtime State](#classroom-runtime-state)
-6. [Chat and Signal Paths](#chat-and-signal-paths)
-7. [Error and Fallback Behavior](#error-and-fallback-behavior)
+6. [Layout Modes](#layout-modes)
+7. [Chat and Signal Paths](#chat-and-signal-paths)
+8. [Design Tokens](#design-tokens)
+9. [Error and Fallback Behavior](#error-and-fallback-behavior)
 
 ## Tech Stack
 
@@ -88,10 +90,26 @@ Representative UI state in `Classroom`:
 - feed maps: remote feeds and screen-share feeds
 - whiteboard visibility and signal bus bridge
 - pinned feed state for focus mode
+- layout mode: `auto` | `grid` | `spotlight`
 
 Whiteboard signal routing:
 - `Classroom` receives `onSignal` from JanusService
 - forwards `wb-*` events to `WhiteboardSync` through `whiteboardSignalHandler`
+
+## Layout Modes
+
+Users can switch between layout modes via bottom-bar toggle buttons:
+
+| Mode | Behavior |
+|------|----------|
+| Auto | Responsive grid that adapts column count based on participant number |
+| Grid | Forced 2-column equal-size tile layout for all participants |
+| Spotlight | Side-by-side two-panel view; first 2 feeds get equal large panels, extras go below |
+| Pin | Click the pin icon on any tile to make it the primary focus in presentation stage |
+
+Switching layout mode clears any active pin. Pin mode overrides the selected layout.
+
+On mobile (≤768px), the layout toggle is hidden and the grid defaults to responsive auto-fit.
 
 ## Chat and Signal Paths
 
@@ -118,7 +136,20 @@ Signaling failures:
 
 Session cleanup:
 - on route leave/unmount, `janusService.destroy()` is called
-- closes signaling socket, stops local screen tracks, destroys Janus session
+- closes signaling socket, stops all local media tracks (camera, mic, screen share), destroys Janus session
+- camera LED turns off immediately on leave — hardware is fully released
+
+## Design Tokens
+
+CSS custom properties live in `frontend/src/styles/design-tokens.css`:
+
+| Token | Value | Purpose |
+|-------|-------|--------|
+| `--primary` | `#1a73e8` | Google-blue brand color |
+| `--primary-hover` | `#1765cc` | Hover state |
+| `--brand-accent` | `#0f9d58` | Green accent |
+| `--bg-dark` | `#0F172A` | Dark backgrounds |
+| `--bg-panel` | `rgba(30,41,59,0.7)` | Glass panel overlays |
 
 Related docs:
 - [Media Streaming](./MEDIA_STREAMING.md)

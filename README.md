@@ -1,6 +1,6 @@
-# Janus Implementation Documentation
+# GTS Meet Documentation
 
-This folder contains the technical documentation for the Janus classroom platform.
+This folder contains the technical documentation for the GTS Meet video conferencing platform.
 
 Audience:
 - Developers extending frontend or backend behavior

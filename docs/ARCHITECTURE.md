@@ -1,6 +1,6 @@
 # Architecture
 
-This project is a containerized virtual classroom platform built on Janus SFU.
+GTS Meet is a containerized video meeting platform built on Janus SFU.
 
 ## Contents
 
@@ -60,8 +60,9 @@ flowchart LR
 Frontend:
 - React + Vite UI in `frontend/src`
 - `JanusService` encapsulates Janus SDK session/handles and signaling fallback behavior
-- `Classroom` coordinates media UI, chat persistence, and collaboration state
+- `Classroom` coordinates media UI, chat persistence, collaboration state, and layout modes (auto/grid/spotlight/pin)
 - `WhiteboardSync` handles delta/snapshot synchronization for Excalidraw
+- `Dashboard` provides branded room creation with loading feedback
 
 Backend:
 - Express app with layered architecture in `backend/src`
@@ -136,3 +137,4 @@ Message:
 - Nginx normalizes trusted LAN/localhost origins for Janus WebSocket proxy.
 - CORS defaults are private-network oriented; production internet exposure requires explicit origin policy updates.
 - TextRoom can still carry chat and signaling envelopes, but backend signaling WebSocket is the preferred collaboration path.
+- On session destroy, all local media tracks (camera/mic) are explicitly stopped to release hardware.

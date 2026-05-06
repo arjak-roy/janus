@@ -1,6 +1,6 @@
 # Quick Start
 
-Use this guide to run the Janus classroom stack locally with Docker Compose.
+Use this guide to run the GTS Meet stack locally with Docker Compose.
 
 ## Contents
 
