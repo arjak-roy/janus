@@ -16,6 +16,8 @@ import adapter from 'webrtc-adapter';
 const JANUS_WS = import.meta.env.VITE_JANUS_WS_URL ||
   `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:${window.location.port}/janus-ws`;
 
+const IPV4_HOSTNAME_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+
 function resolveIceServers() {
   const fromEnv = import.meta.env.VITE_ICE_SERVERS_JSON;
   if (fromEnv) {
@@ -50,6 +52,50 @@ function getJanus() {
     );
   }
   return J;
+}
+
+function resolveMediaAccessError(err, opts = { audio: true, video: true }) {
+  const featurePolicy = document.permissionsPolicy || document.featurePolicy;
+  const hasPolicyCheck = typeof featurePolicy?.allowsFeature === 'function';
+  const cameraAllowed = !opts.video || !hasPolicyCheck || featurePolicy.allowsFeature('camera');
+  const microphoneAllowed = !opts.audio || !hasPolicyCheck || featurePolicy.allowsFeature('microphone');
+  const runsInIframe = window.top !== window.self;
+  const usesHttpsIpOrigin =
+    window.location.protocol === 'https:' && IPV4_HOSTNAME_RE.test(window.location.hostname);
+
+  if (!window.isSecureContext) {
+    if (usesHttpsIpOrigin) {
+      return 'Camera access requires a trusted HTTPS hostname. This meeting is loaded from an HTTPS IP address, and browsers often block camera/microphone until that origin uses a trusted TLS certificate on a real hostname. Use a trusted hostname or localhost for development.';
+    }
+
+    return 'Camera access requires a secure context. Open the meeting from trusted HTTPS or localhost.';
+  }
+
+  if (runsInIframe && (!cameraAllowed || !microphoneAllowed)) {
+    const blockedFeatures = [
+      opts.video && !cameraAllowed ? 'camera' : null,
+      opts.audio && !microphoneAllowed ? 'microphone' : null
+    ].filter(Boolean);
+
+    if (blockedFeatures.length > 0) {
+      return `The embedding page is blocking ${blockedFeatures.join(' and ')} access for this meeting iframe. Allow those features on the parent page response and on the iframe allow attribute.`;
+    }
+  }
+
+  const errorMap = {
+    NotAllowedError: 'Camera/microphone permission denied. Please allow access in your browser settings.',
+    NotFoundError: 'No camera or microphone found on this device.',
+    NotReadableError: 'Camera or microphone is already in use by another application.',
+    OverconstrainedError: 'Camera does not support the requested resolution.',
+    AbortError: 'Camera access was aborted.',
+    SecurityError: 'Camera access requires a secure context. Open the meeting from trusted HTTPS or localhost.'
+  };
+
+  return errorMap[err?.name] || `Camera error: ${err?.message || 'Unknown error'}`;
+}
+
+function shouldRetryAudioOnly(err) {
+  return err?.name === 'NotFoundError' || err?.name === 'OverconstrainedError';
 }
 
 class JanusService {
@@ -178,20 +224,12 @@ class JanusService {
       testStream.getTracks().forEach(t => t.stop());
       console.log('[JanusService] getUserMedia test passed');
     } catch (err) {
-      const errorMap = {
-        'NotAllowedError': 'Camera/microphone permission denied. Please allow access in your browser settings.',
-        'NotFoundError': 'No camera or microphone found on this device.',
-        'NotReadableError': 'Camera or microphone is already in use by another application.',
-        'OverconstrainedError': 'Camera does not support the requested resolution.',
-        'AbortError': 'Camera access was aborted.',
-        'SecurityError': 'Camera access requires a secure context (HTTPS). Please use HTTPS or localhost.'
-      };
-      const friendlyMsg = errorMap[err.name] || `Camera error: ${err.message}`;
-      console.error(`[JanusService] getUserMedia failed (${err.name}):`, err.message);
+      const friendlyMsg = resolveMediaAccessError(err, opts);
+      console.error(`[JanusService] getUserMedia failed (${err?.name || 'UnknownError'}):`, err?.message || err);
       this.onError?.(friendlyMsg);
 
-      // If video fails, try audio-only as fallback
-      if (opts.video) {
+      // Only retry audio-only when the camera constraints/device are the issue.
+      if (opts.video && shouldRetryAudioOnly(err)) {
         console.warn('[JanusService] Falling back to audio-only...');
         return this.publishOwnFeed({ audio: opts.audio, video: false });
       }
