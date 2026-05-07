@@ -5,10 +5,10 @@ export class RoomService {
   }
 
   async createRoom(payload) {
-    const { name, isPrivate, maxUsers } = payload;
+    const { name, title, isPrivate, maxUsers, isLiveClass, creatorId, creatorName } = payload || {};
     const janusId = Math.floor(1000 + Math.random() * 99000);
     const roomConfig = {
-      name: name || `Room ${janusId}`,
+      name: name || title || `Room ${janusId}`,
       isPrivate: isPrivate || false,
       maxUsers: maxUsers || 6
     };
@@ -26,10 +26,28 @@ export class RoomService {
     const room = await this.roomRepository.create({
       janusId,
       name: roomConfig.name,
+      title: title || null,
       isPrivate: roomConfig.isPrivate,
-      maxUsers: roomConfig.maxUsers
+      isLiveClass: isLiveClass || false,
+      maxUsers: roomConfig.maxUsers,
+      creatorId: creatorId || null,
+      creatorName: creatorName || null
     });
 
+    return room;
+  }
+
+  async destroyRoom(identifier) {
+    const room = await this.roomRepository.findByIdOrJanusId(identifier);
+    if (!room) return null;
+
+    // Destroy in Janus (best-effort)
+    await Promise.allSettled([
+      this.janusApiService.destroyJanusRoom('janus.plugin.videoroom', room.janusId),
+      this.janusApiService.destroyJanusRoom('janus.plugin.textroom', room.janusId)
+    ]);
+
+    await this.roomRepository.deleteById(room.id);
     return room;
   }
 

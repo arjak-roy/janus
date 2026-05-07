@@ -1,945 +1,438 @@
-/* ── Google Meet-like Classroom Layout ── */
-.meet-classroom {
+/* ── Teams-Style Classroom Layout ── */
+.teams-classroom {
   display: flex;
   flex-direction: column;
   height: 100vh;
   width: 100vw;
-  background-color: #202124; /* Google Meet dark background */
+  background: #1b1a2e;
   color: #fff;
-  font-family: 'Roboto', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
   overflow: hidden;
-  position: relative;
 }
 
-/* ── Toast Notice ── */
-.meet-notice {
+/* ── Header ── */
+.teams-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 52px;
+  background: #252440;
+  border-bottom: 1px solid #3d3b5c;
+  flex-shrink: 0;
+}
+.teams-header__left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.teams-header__right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 0.85rem;
+  color: #a8a6c4;
+}
+.teams-header__count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.teams-header__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e8e6f0;
+}
+.teams-header__duration {
+  font-size: 0.8rem;
+  color: #8b89a8;
+  font-variant-numeric: tabular-nums;
+}
+.teams-live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #ef4444;
+  letter-spacing: 0.05em;
+}
+.teams-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: pulse 1.5s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Toast ── */
+.teams-toast {
   position: absolute;
-  top: 16px;
+  top: 64px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
   padding: 10px 20px;
   border-radius: 8px;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 500;
   display: flex;
   align-items: center;
   gap: 12px;
   animation: slideDown 0.3s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
-.meet-notice--error { background: #d93025; color: #fff; }
-.meet-notice--info  { background: #1a73e8; color: #fff; }
-.meet-notice__close {
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: 1rem;
-  padding: 0;
-}
-@keyframes slideDown {
-  from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
+.teams-toast--error { background: #dc2626; }
+.teams-toast--info { background: #6366f1; }
+.teams-toast__close { background: none; border: none; color: #fff; cursor: pointer; opacity: 0.7; }
+.teams-toast__close:hover { opacity: 1; }
+@keyframes slideDown { from { transform: translateX(-50%) translateY(-20px); opacity: 0; } to { transform: translateX(-50%) translateY(0); opacity: 1; } }
 
-/* ── Main Area ── */
-.meet-main {
+/* ── Main Layout ── */
+.teams-main {
   flex: 1;
   display: flex;
-  position: relative;
   overflow: hidden;
-  padding: 16px;
-  gap: 16px;
-}
-
-/* ── Presentation Stage ── */
-.meet-presentation-stage {
-  flex: 1;
-  background: #fff;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
   position: relative;
 }
 
-.whiteboard-canvas {
-  position: absolute;
-  inset: 0;
-}
-
-/* ── Video Grid ── */
-.meet-videos-container {
+/* ── Stage (Presentation / Pinned / Whiteboard) ── */
+.teams-stage {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.3s ease;
-}
-
-.meet-videos-container.sidebar-mode {
-  flex: 0 0 300px;
-  align-items: stretch;
-}
-
-.video-grid {
-  display: grid;
-  gap: 12px;
-  width: 100%;
-  height: 100%;
-  max-width: 1200px;
-  max-height: 800px;
-  transition: all 0.3s ease;
-}
-
-/* Grid Layouts depending on number of participants */
-.video-grid:not(.video-grid--presentation):not(.video-grid--grid):not(.video-grid--spotlight) {
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  grid-auto-rows: minmax(200px, 1fr);
-}
-
-.video-grid--presentation {
-  grid-template-columns: 1fr;
-  grid-auto-rows: minmax(150px, auto);
-  align-content: start;
-  overflow-y: auto;
-  padding-right: 8px;
-}
-
-/* Grid mode: equal tiles, always 2 columns */
-.video-grid--grid {
-  grid-template-columns: repeat(2, 1fr);
-  grid-auto-rows: 1fr;
-}
-
-/* Spotlight mode: side-by-side 2 large panels */
-.video-grid--spotlight {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr;
-}
-.video-grid--spotlight .video-tile:first-child {
-  grid-row: 1;
-  grid-column: 1;
-}
-.video-grid--spotlight .video-tile:nth-child(2) {
-  grid-row: 1;
-  grid-column: 2;
-}
-/* Spotlight: any tiles beyond the first 2 go into a small row beneath */
-.video-grid--spotlight .video-tile:nth-child(n+3) {
-  grid-column: span 1;
-}
-
-/* ── Layout Toggle ── */
-.layout-toggle {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  padding: 2px;
-}
-
-.video-tile {
-  position: relative;
-  background: #3c4043;
-  border-radius: 8px;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 1px 2px 0 rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15);
-}
-
-.video-tile video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.video-tile__info {
-  position: absolute;
-  bottom: 12px;
-  left: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(0, 0, 0, 0.5);
-  padding: 4px 10px;
+  background: #13122a;
   border-radius: 12px;
-  backdrop-filter: blur(4px);
+  margin: 12px;
+  overflow: hidden;
+  position: relative;
 }
-
-.video-tile__name {
-  font-size: 13px;
-  font-weight: 500;
-  color: white;
-}
-
-.status-icon {
-  font-size: 12px;
+.teams-pinned {
+  width: 100%;
+  height: 100%;
   display: flex;
-  align-items: center;
-}
-.status-icon svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* ── Hand Raise Badge ── */
-.hand-raise-badge {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: #fbbf24;
-  color: #202124;
-  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  z-index: 5;
-  animation: handBounce 0.5s ease;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  position: relative;
 }
-.hand-raise-badge svg {
-  width: 18px;
-  height: 18px;
-  stroke: #202124;
-}
-@keyframes handBounce {
-  0% { transform: scale(0); }
-  50% { transform: scale(1.2); }
-  100% { transform: scale(1); }
-}
-
-/* ── Pin Button (shows on tile hover) ── */
-.pin-button {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  border: none;
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.2s, background 0.2s;
-  z-index: 5;
-}
-.pin-button svg {
-  width: 14px;
-  height: 14px;
-}
-.video-tile:hover .pin-button {
-  opacity: 1;
-}
-.pin-button:hover {
-  background: rgba(0, 0, 0, 0.8);
-}
-
-/* ── Pinned Video (in presentation stage) ── */
-.pinned-video-container {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #000;
-}
-.pinned-video {
+.teams-pinned-video {
   width: 100%;
   height: 100%;
   position: relative;
 }
-.pinned-video video {
+.teams-pinned-video video {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  background: #000;
 }
-.pinned-video__info {
+.teams-pinned-video__label {
   position: absolute;
-  bottom: 16px;
-  left: 16px;
-  background: rgba(0, 0, 0, 0.5);
-  padding: 6px 12px;
-  border-radius: 12px;
-  backdrop-filter: blur(4px);
+  bottom: 12px;
+  left: 12px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 0.8rem;
 }
-.pinned-video__name {
-  font-size: 14px;
-  font-weight: 500;
-  color: white;
-}
-.unpin-button {
+.teams-unpin-btn {
   position: absolute;
-  top: 16px;
-  right: 16px;
+  top: 12px;
+  right: 12px;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
-  border-radius: 20px;
   background: rgba(0, 0, 0, 0.6);
   border: none;
-  color: white;
-  font-size: 13px;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.8rem;
   cursor: pointer;
-  transition: background 0.2s;
-  z-index: 5;
 }
-.unpin-button:hover {
-  background: rgba(0, 0, 0, 0.85);
+.teams-unpin-btn:hover { background: rgba(0, 0, 0, 0.8); }
+
+/* ── Video Grid Area ── */
+.teams-grid-area {
+  flex: 1;
+  display: flex;
+  padding: 12px;
+  overflow: hidden;
 }
-.unpin-button svg {
-  width: 16px;
-  height: 16px;
+.teams-grid-area--side {
+  flex: 0 0 280px;
+  max-width: 280px;
 }
 
-.video-tile__overlay {
+/* ── Video Grid ── */
+.teams-video-grid {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: 1fr;
+  align-content: center;
+}
+.teams-video-grid--few {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-content: center;
+}
+.teams-video-grid--gallery {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-auto-rows: minmax(160px, 1fr);
+  align-content: start;
+}
+.teams-video-grid--filmstrip {
+  grid-template-columns: 1fr;
+  grid-auto-rows: minmax(100px, 1fr);
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+/* ── Video Tile ── */
+.teams-tile {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #252440;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+}
+.teams-video-grid--filmstrip .teams-tile {
+  aspect-ratio: auto;
+}
+.teams-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.teams-tile__label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 8px 12px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.teams-tile__name {
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.teams-tile__muted {
+  opacity: 0.7;
+}
+.teams-tile__overlay {
   position: absolute;
   inset: 0;
-  background: rgba(32, 33, 36, 0.7);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  background: rgba(27, 26, 46, 0.8);
+}
+.teams-tile__overlay--error { color: #f87171; }
+.teams-tile__overlay p { font-size: 0.8rem; margin-top: 8px; text-align: center; padding: 0 12px; }
+
+.teams-hand-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: #eab308;
+  color: #000;
+  padding: 4px;
+  border-radius: 50%;
+  animation: bounce 0.6s ease infinite alternate;
+}
+@keyframes bounce { from { transform: translateY(0); } to { transform: translateY(-3px); } }
+
+.teams-pin-btn {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  border: none;
+  color: #fff;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.teams-tile:hover .teams-pin-btn { opacity: 1; }
+
+.teams-badge-role {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.teams-badge-role--trainer {
+  background: rgba(99, 102, 241, 0.3);
+  color: #a5b4fc;
 }
 
-/* ── Sidebar (Chat / People) ── */
-.meet-sidebar {
-  width: 360px;
-  background: #fff;
-  border-radius: 8px;
-  color: #3c4043;
+/* ── Sidebar ── */
+.teams-sidebar {
+  width: 320px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  box-shadow: 0 1px 3px 0 rgba(0,0,0,0.3);
-  animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: #252440;
+  border-left: 1px solid #3d3b5c;
 }
-
-.meet-sidebar__header {
+.teams-sidebar__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
-  border-bottom: 1px solid #f1f3f4;
+  padding: 16px 20px;
+  border-bottom: 1px solid #3d3b5c;
 }
+.teams-sidebar__head h3 { font-size: 1rem; font-weight: 600; margin: 0; }
+.teams-sidebar__head button { background: none; border: none; color: #a8a6c4; cursor: pointer; padding: 4px; }
 
-.meet-sidebar__header h3 {
-  font-size: 18px;
-  font-weight: 400;
-  margin: 0;
-  color: #202124;
-}
+/* Chat */
+.teams-chat { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.teams-chat__list { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.teams-chat__empty { color: #8b89a8; font-size: 0.85rem; text-align: center; padding: 40px 20px; }
+.teams-msg { display: flex; gap: 10px; }
+.teams-msg--self { flex-direction: row-reverse; }
+.teams-msg__avatar { width: 32px; height: 32px; border-radius: 50%; background: #6366f1; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 600; flex-shrink: 0; }
+.teams-msg__body { max-width: 80%; }
+.teams-msg__sender { font-size: 0.75rem; color: #a8a6c4; margin-bottom: 2px; display: block; }
+.teams-msg__bubble { background: #3d3b5c; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; line-height: 1.4; word-break: break-word; }
+.teams-msg--self .teams-msg__bubble { background: #6366f1; }
+.teams-msg__time { font-size: 0.7rem; color: #6b698a; margin-top: 4px; display: block; }
+.teams-chat__form { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid #3d3b5c; }
+.teams-chat__form input { flex: 1; background: #1b1a2e; border: 1px solid #3d3b5c; border-radius: 8px; padding: 10px 14px; color: #fff; font-size: 0.85rem; outline: none; }
+.teams-chat__form input:focus { border-color: #6366f1; }
+.teams-chat__form button { background: #6366f1; border: none; color: #fff; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+.teams-chat__form button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.icon-button {
-  background: transparent;
-  border: none;
-  color: #5f6368;
-  cursor: pointer;
-  font-size: 18px;
-  padding: 8px;
-  border-radius: 50%;
+/* People */
+.teams-people { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
+.teams-person { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; transition: background 0.15s; }
+.teams-person:hover { background: rgba(99, 102, 241, 0.1); }
+.teams-person__av { width: 36px; height: 36px; border-radius: 50%; background: #6366f1; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 600; flex-shrink: 0; }
+.teams-person__info { flex: 1; min-width: 0; }
+.teams-person__name { font-size: 0.85rem; font-weight: 500; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.teams-person__role { font-size: 0.7rem; text-transform: capitalize; }
+.teams-person__role--trainer { color: #a5b4fc; }
+.teams-person__role--candidate { color: #8b89a8; }
+.teams-person__acts { display: flex; align-items: center; gap: 4px; }
+.teams-person__hand { color: #eab308; }
+.teams-person__trainer-btns { display: flex; gap: 4px; }
+.teams-person__trainer-btns button { background: rgba(255, 255, 255, 0.1); border: none; color: #a8a6c4; padding: 4px 6px; border-radius: 4px; cursor: pointer; transition: all 0.15s; }
+.teams-person__trainer-btns button:hover { background: rgba(255, 255, 255, 0.2); color: #fff; }
+.teams-btn-danger:hover { background: rgba(239, 68, 68, 0.3) !important; color: #f87171 !important; }
+
+/* ── Controls Bar ── */
+.teams-controls {
   display: flex;
   align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-}
-
-.icon-button:hover {
-  background: #f1f3f4;
-}
-
-/* ── Chat ── */
-.meet-chat {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: #fff;
-}
-
-.meet-chat__messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: #dadce0 transparent;
-}
-
-.meet-chat__messages::-webkit-scrollbar { width: 4px; }
-.meet-chat__messages::-webkit-scrollbar-track { background: transparent; }
-.meet-chat__messages::-webkit-scrollbar-thumb { background: #dadce0; border-radius: 2px; }
-
-.meet-chat__empty {
-  background: #f8f9fa;
-  padding: 16px;
-  border-radius: 12px;
-  text-align: center;
-  font-size: 13px;
-  color: #80868b;
-  line-height: 1.5;
-  margin-top: 8px;
-}
-
-/* Message bubbles */
-.chat-message {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-end;
-  gap: 8px;
-  max-width: 82%;
-  align-self: flex-start;
-  margin-top: 6px;
-}
-
-.chat-message--self {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-}
-
-.chat-message__avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: #1a73e8;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 64px;
+  background: #252440;
+  border-top: 1px solid #3d3b5c;
   flex-shrink: 0;
-  margin-bottom: 2px;
 }
-
-.chat-message__content {
+.teams-controls__left,
+.teams-controls__center,
+.teams-controls__right {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.chat-message--self .chat-message__content {
-  align-items: flex-end;
-}
-
-.chat-message__sender {
-  font-size: 11px;
-  font-weight: 600;
-  color: #5f6368;
-  padding: 0 4px;
-}
-
-.chat-message__bubble {
-  background: #f1f3f4;
-  color: #202124;
-  padding: 8px 13px;
-  border-radius: 18px 18px 18px 4px;
-  font-size: 14px;
-  line-height: 1.45;
-  word-break: break-word;
-  max-width: 100%;
-}
-
-.chat-message--self .chat-message__bubble {
-  background: #1a73e8;
-  color: #fff;
-  border-radius: 18px 18px 4px 18px;
-}
-
-.chat-message__time {
-  font-size: 10px;
-  color: #9aa0a6;
-  padding: 0 4px;
-}
-
-/* Input area */
-.meet-chat__input {
-  padding: 10px 14px 14px;
-  display: flex;
+  align-items: center;
   gap: 8px;
-  align-items: center;
-  border-top: 1px solid #f1f3f4;
-  background: #fff;
 }
+.teams-controls__center { gap: 6px; }
 
-.meet-chat__input input {
-  flex: 1;
-  padding: 10px 16px;
-  border: 1.5px solid #dadce0;
-  border-radius: 24px;
-  outline: none;
-  font-size: 14px;
-  background: #f8f9fa;
-  color: #202124;
-  transition: all 0.2s;
-}
-
-.meet-chat__input input::placeholder {
-  color: #9aa0a6;
-}
-
-.meet-chat__input input:focus {
-  background: #fff;
-  border-color: #1a73e8;
-  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.12);
-}
-
-.send-btn {
-  color: #fff;
-  background: #1a73e8;
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  transition: background 0.2s, transform 0.1s;
-}
-.send-btn:not(:disabled):hover {
-  background: #1765cc;
-  transform: scale(1.05);
-}
-.send-btn:disabled {
-  color: #9aa0a6;
-  background: #f1f3f4;
-  cursor: not-allowed;
-}
-
-/* ── People ── */
-.meet-people {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 24px;
-}
-
-.person-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 8px 0;
-}
-
-.person-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: #1a73e8;
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 500;
-  font-size: 14px;
-}
-
-.person-name {
-  flex: 1;
-  font-size: 14px;
-  color: #3c4043;
-}
-
-.person-controls {
-  font-size: 12px;
+.teams-ctrl {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-.person-hand {
-  color: #fbbf24;
-  display: flex;
-  align-items: center;
-}
-.person-hand svg {
-  width: 16px;
-  height: 16px;
-  stroke: #d97706;
-}
-.person-muted {
-  color: #5f6368;
-  display: flex;
-  align-items: center;
-}
-.person-muted svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* ── Bottom Bar ── */
-.meet-bottom-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 24px;
-  background: #202124;
-}
-
-.meet-bottom-bar__left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: #fff;
-  font-size: 15px;
-  font-weight: 500;
-  width: 260px;
-}
-
-.meet-bottom-brand {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.7);
-  letter-spacing: -0.3px;
-}
-
-.meet-bottom-brand strong {
-  color: #8ab4f8;
-  font-weight: 700;
-}
-
-.divider {
-  color: #5f6368;
-}
-
-.meet-bottom-bar__center {
-  display: flex;
-  gap: 12px;
-}
-
-.meet-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
   border: none;
-  background: #3c4043;
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  color: #e8e6f0;
+  padding: 10px 14px;
+  border-radius: 10px;
   cursor: pointer;
-  transition: all 0.2s;
-  position: relative;
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: all 0.15s;
 }
+.teams-ctrl:hover { background: rgba(255, 255, 255, 0.15); }
+.teams-ctrl--off { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+.teams-ctrl--off:hover { background: rgba(239, 68, 68, 0.3); }
+.teams-ctrl--active { background: rgba(99, 102, 241, 0.3); color: #a5b4fc; }
+.teams-ctrl--active:hover { background: rgba(99, 102, 241, 0.4); }
+.teams-ctrl--warn { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+.teams-ctrl--warn:hover { background: rgba(234, 179, 8, 0.3); }
+.teams-ctrl--leave { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+.teams-ctrl--leave:hover { background: #dc2626; color: #fff; }
+.teams-ctrl--end { background: #dc2626; color: #fff; }
+.teams-ctrl--end:hover { background: #b91c1c; }
+.teams-ctrl--side { padding: 10px; position: relative; }
 
-.meet-btn:hover {
-  background: #4a4d51;
-}
-
-.meet-btn__icon {
-  font-size: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.meet-btn__icon svg {
-  width: 20px;
-  height: 20px;
-}
-
-.meet-btn--danger {
-  background: #ea4335;
-}
-.meet-btn--danger:hover {
-  background: #d93025;
-}
-
-.meet-btn--active {
-  background: #8ab4f8;
-  color: #202124;
-}
-.meet-btn--active .meet-btn__icon {
-  color: #202124;
-}
-
-.meet-btn--leave {
-  background: #ea4335;
-  width: 60px;
-  border-radius: 24px;
-}
-
-.meet-bottom-bar__right {
-  display: flex;
-  gap: 12px;
-  width: 200px;
-  justify-content: flex-end;
-}
-
-.meet-btn--small {
-  width: 40px;
-  height: 40px;
-  background: transparent;
-}
-.meet-btn--small:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.notification-dot {
+.teams-badge-count {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 8px;
-  height: 8px;
-  background: #8ab4f8;
-  border-radius: 50%;
-  border: 2px solid #202124;
-}
-
-.notification-badge {
-  position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 2px;
+  right: 2px;
+  background: #eab308;
+  color: #000;
+  font-size: 0.65rem;
+  font-weight: 700;
   min-width: 16px;
   height: 16px;
-  padding: 0 4px;
-  background: #fbbf24;
-  color: #202124;
   border-radius: 8px;
-  font-size: 10px;
-  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px solid #202124;
+  padding: 0 4px;
+}
+.teams-notif-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6366f1;
 }
 
 /* ── Spinner ── */
 .spinner {
   width: 32px;
   height: 32px;
-  border: 3px solid rgba(255,255,255,0.2);
-  border-top-color: #8ab4f8;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #6366f1;
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes slideInRight {
-  from { transform: translateX(20px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
-}
-
-/* ══════════════════════════════════════════════════════════
-   RESPONSIVE — Tablet (≤768px)
-   ══════════════════════════════════════════════════════════ */
+/* ── Responsive ── */
 @media (max-width: 768px) {
-  .meet-classroom {
-    touch-action: manipulation;
-  }
-
-  /* ── Layout stacking ── */
-  .meet-main {
-    flex-direction: column;
-    padding: 8px;
-    gap: 8px;
-  }
-
-  .meet-presentation-stage {
-    flex: none;
-    height: 50vh;
-  }
-
-  .meet-videos-container {
-    flex: 1;
-    min-height: 0;
-  }
-
-  .meet-videos-container.sidebar-mode {
-    flex: 1;
-    min-height: 120px;
-  }
-
-  /* ── Video Grid ── */
-  .video-grid:not(.video-grid--presentation):not(.video-grid--grid):not(.video-grid--spotlight) {
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    grid-auto-rows: minmax(120px, 1fr);
-  }
-
-  .video-grid--grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .video-grid--spotlight {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .video-grid--presentation {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    grid-auto-rows: minmax(100px, auto);
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-right: 0;
-  }
-
-  .layout-toggle {
-    display: none;
-  }
-
-  /* ── Bottom Bar ── */
-  .meet-bottom-bar {
-    padding: 10px 12px;
-  }
-
-  .meet-bottom-bar__left {
-    display: none;
-  }
-
-  .meet-bottom-bar__center {
-    gap: 8px;
-  }
-
-  .meet-btn {
-    width: 40px;
-    height: 40px;
-  }
-
-  .meet-btn--leave {
-    width: 52px;
-  }
-
-  .meet-bottom-bar__right {
-    width: auto;
-    gap: 8px;
-  }
-
-  /* ── Sidebar — full-screen overlay ── */
-  .meet-sidebar {
-    position: fixed;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    border-radius: 0;
-    z-index: 100;
-    animation: slideUp 0.25s ease;
-  }
-
-  .meet-sidebar__header {
-    padding: 12px 16px;
-  }
-
-  .icon-button {
-    min-width: 44px;
-    min-height: 44px;
-  }
-
-  /* ── Chat input — prevent iOS zoom ── */
-  .meet-chat__input input {
-    font-size: 16px;
-  }
-
-  .meet-chat__input {
-    padding: 10px 12px 12px;
-  }
-
-  .meet-chat__messages {
-    padding: 12px 10px;
-  }
-}
-
-/* ══════════════════════════════════════════════════════════
-   RESPONSIVE — Phone (≤480px)
-   ══════════════════════════════════════════════════════════ */
-@media (max-width: 480px) {
-  .meet-main {
-    padding: 4px;
-    gap: 4px;
-  }
-
-  .meet-presentation-stage {
-    height: 45vh;
-  }
-
-  /* ── Video Grid ── */
-  .video-grid:not(.video-grid--presentation) {
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    grid-auto-rows: minmax(90px, 1fr);
-    gap: 4px;
-  }
-
-  .video-grid--presentation {
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    grid-auto-rows: minmax(80px, auto);
-    gap: 4px;
-  }
-
-  /* ── Bottom Bar ── */
-  .meet-bottom-bar {
-    padding: 8px;
-  }
-
-  .meet-bottom-bar__center {
-    gap: 6px;
-  }
-
-  .meet-btn {
-    width: 36px;
-    height: 36px;
-  }
-
-  .meet-btn__icon svg {
-    width: 18px;
-    height: 18px;
-  }
-
-  .meet-btn--leave {
-    width: 48px;
-  }
-
-  .meet-btn--small {
-    width: 36px;
-    height: 36px;
-  }
-
-  /* ── Tile info — smaller on tiny screens ── */
-  .video-tile__info {
-    bottom: 6px;
-    left: 6px;
-    padding: 2px 6px;
-  }
-
-  .video-tile__name {
-    font-size: 11px;
-  }
-
-  /* ── Pinned video controls ── */
-  .unpin-button {
-    top: 8px;
-    right: 8px;
-    padding: 6px 10px;
-    font-size: 12px;
-  }
-
-  /* ── Hand raise badge ── */
-  .hand-raise-badge {
-    width: 26px;
-    height: 26px;
-    top: 6px;
-    right: 6px;
-  }
-  .hand-raise-badge svg {
-    width: 14px;
-    height: 14px;
-  }
-
-  /* ── Notice toast ── */
-  .meet-notice {
-    top: 8px;
-    left: 8px;
-    right: 8px;
-    transform: none;
-    font-size: 0.8rem;
-    padding: 8px 12px;
-  }
-}
-
-@keyframes slideUp {
-  from { transform: translateY(100%); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  .teams-sidebar { width: 100%; position: absolute; right: 0; top: 0; bottom: 0; z-index: 100; }
+  .teams-grid-area--side { flex: 0 0 200px; max-width: 200px; }
+  .teams-controls { padding: 0 10px; height: 56px; }
+  .teams-ctrl span { display: none; }
+  .teams-ctrl { padding: 10px; }
 }

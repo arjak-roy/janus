@@ -290,7 +290,7 @@ class JanusService {
   }
 
   // ── WebSocket Signaling (hand-raise, whiteboard) ────────
-  connectSignaling(roomId) {
+  connectSignaling(roomId, token) {
     if (this._signalWsReady) {
       console.warn('[JanusService] Signaling already connected');
       return Promise.resolve();
@@ -300,7 +300,8 @@ class JanusService {
     return new Promise((resolve, reject) => {
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.hostname}:${window.location.port}/api/rooms/${roomId}/ws`;
+        const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+        const wsUrl = `${protocol}//${window.location.hostname}:${window.location.port}/api/rooms/${roomId}/ws${tokenParam}`;
         
         this.signalWs = new WebSocket(wsUrl);
 

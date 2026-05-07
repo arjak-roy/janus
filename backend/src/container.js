@@ -6,6 +6,7 @@ import { RoomService } from './services/roomService.js';
 import { MessageService } from './services/messageService.js';
 import { HealthService } from './services/healthService.js';
 import { SignalingService } from './services/signalingService.js';
+import { TokenService } from './services/tokenService.js';
 import { CleanupService } from './services/cleanupService.js';
 import { RoomController } from './controllers/roomController.js';
 import { MessageController } from './controllers/messageController.js';
@@ -17,17 +18,18 @@ export function createContainer() {
   const messageRepository = new MessageRepository(prisma);
 
   const janusApiService = new JanusApiService();
+  const tokenService = new TokenService();
   const roomService = new RoomService(roomRepository, janusApiService);
   const messageService = new MessageService(roomRepository, messageRepository);
   const healthService = new HealthService(prisma);
-  const signalingService = new SignalingService(roomRepository);
+  const signalingService = new SignalingService(roomRepository, tokenService);
   const cleanupService = new CleanupService(roomRepository, janusApiService);
 
   return {
     prisma,
     cleanupService,
     controllers: {
-      roomController: new RoomController(roomService),
+      roomController: new RoomController(roomService, tokenService, signalingService),
       messageController: new MessageController(messageService),
       healthController: new HealthController(healthService),
       signalingController: new SignalingController(signalingService)

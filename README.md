@@ -1,11 +1,15 @@
 # GTS Meet Documentation
 
-This folder contains the technical documentation for the GTS Meet video conferencing platform.
+This folder contains the technical documentation for the GTS Meet video conferencing platform and the Janus-based meeting service it exposes to other GTS apps.
 
 Audience:
 - Developers extending frontend or backend behavior
 - Operators deploying and troubleshooting Docker-based environments
 - Stakeholders reviewing architecture and runtime behavior
+
+Deployment model:
+- Standalone self-hosted meetings: users can open this repo's frontend dashboard at `/` and create or join rooms directly.
+- Separate VPS meeting backend: external apps such as `gts-academy-admin` and `Gts-candidate-app` can call this repo's backend API and then send users back to this frontend at `/room/:roomId`.
 
 ## Contents
 
@@ -68,10 +72,13 @@ flowchart LR
 - VideoRoom: Janus plugin used for audio/video media routing.
 - TextRoom: Janus plugin used for data channel chat/signaling. In this repo it is a legacy fallback for some flows.
 - Signaling WebSocket: backend channel at `/api/rooms/:roomId/ws` used for hand-raise and whiteboard events.
+- Signaling token: JWT minted by the backend and passed to the frontend as `?token=...` for authenticated room joins.
 - SFU: Selective Forwarding Unit model where Janus forwards media between participants.
 
 ## Notes
 
 - Primary signaling path for collaboration features is backend WebSocket signaling.
 - TextRoom is still present and used as fallback in selected frontend paths.
+- The built-in dashboard and `/room/:roomId` meeting UI remain first-class, standalone entrypoints.
+- External apps can also create rooms or mint participant tokens through the backend API and then load this frontend for the actual meeting session.
 - Keep this documentation in sync with code changes in backend `src` layers and frontend `janus`/`components` runtime logic.

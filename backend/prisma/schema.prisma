@@ -12,9 +12,13 @@ model Room {
   id          String    @id @default(uuid())
   janusId     Int       @unique
   name        String
+  title       String?
   description String?
   isPrivate   Boolean   @default(false)
+  isLiveClass Boolean   @default(false)
   maxUsers    Int       @default(6)
+  creatorId   String?
+  creatorName String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   messages    Message[]
