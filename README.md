@@ -10,38 +10,38 @@ Audience:
 ## Contents
 
 1. Getting Started
-- [Quick Start](./QUICK_START.md)
-- [Architecture](./ARCHITECTURE.md)
+- [Quick Start](./docs/QUICK_START.md)
+- [Architecture](./docs/ARCHITECTURE.md)
 
 2. Backend and Janus Integration
-- [Backend API](./BACKEND_API.md)
-- [Janus Integration](./JANUS_INTEGRATION.md)
-- [WebSocket Signaling](./WEBSOCKET_SIGNALING.md)
+- [Backend API](./docs/BACKEND_API.md)
+- [Janus Integration](./docs/JANUS_INTEGRATION.md)
+- [WebSocket Signaling](./docs/WEBSOCKET_SIGNALING.md)
 
 3. Frontend and Realtime Collaboration
-- [Frontend Architecture](./FRONTEND_ARCHITECTURE.md)
-- [Media Streaming](./MEDIA_STREAMING.md)
-- [Whiteboard Sync](./WHITEBOARD_SYNC.md)
+- [Frontend Architecture](./docs/FRONTEND_ARCHITECTURE.md)
+- [Media Streaming](./docs/MEDIA_STREAMING.md)
+- [Whiteboard Sync](./docs/WHITEBOARD_SYNC.md)
 
 4. Operations
-- [Deployment](./DEPLOYMENT.md)
-- [Configuration Reference](./CONFIGURATION_REFERENCE.md)
-- [Troubleshooting](./TROUBLESHOOTING.md)
+- [Deployment](./docs/DEPLOYMENT.md)
+- [Configuration Reference](./docs/CONFIGURATION_REFERENCE.md)
+- [Troubleshooting](./docs/TROUBLESHOOTING.md)
 
 ## Suggested Reading Paths
 
 Developer path:
-1. [Quick Start](./QUICK_START.md)
-2. [Architecture](./ARCHITECTURE.md)
-3. [Frontend Architecture](./FRONTEND_ARCHITECTURE.md)
-4. [Backend API](./BACKEND_API.md)
-5. [WebSocket Signaling](./WEBSOCKET_SIGNALING.md)
+1. [Quick Start](./docs/QUICK_START.md)
+2. [Architecture](./docs/ARCHITECTURE.md)
+3. [Frontend Architecture](./docs/FRONTEND_ARCHITECTURE.md)
+4. [Backend API](./docs/BACKEND_API.md)
+5. [WebSocket Signaling](./docs/WEBSOCKET_SIGNALING.md)
 
 Operator path:
-1. [Quick Start](./QUICK_START.md)
-2. [Deployment](./DEPLOYMENT.md)
-3. [Configuration Reference](./CONFIGURATION_REFERENCE.md)
-4. [Troubleshooting](./TROUBLESHOOTING.md)
+1. [Quick Start](./docs/QUICK_START.md)
+2. [Deployment](./docs/DEPLOYMENT.md)
+3. [Configuration Reference](./docs/CONFIGURATION_REFERENCE.md)
+4. [Troubleshooting](./docs/TROUBLESHOOTING.md)
 
 ## Documentation Map
 
