@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { janusService } from '../janus/JanusService.js';
-import WhiteboardSync from './WhiteboardSync.jsx';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
+
+import WhiteboardSync from './WhiteboardSync.jsx';
+import { janusService, resolveMediaAccessError } from '../janus/JanusService.js';
 import './Classroom.css';
 
 // ── SVG Icons ────────────────────────────────────────────
@@ -41,7 +42,46 @@ function parseTokenPayload(token) {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
     return JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-  } catch { return null; }
+  } catch {
+    return null;
+  }
+}
+
+function buildInitials(value) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('') || 'GM';
+}
+
+function buildMediaConstraint(enabled, deviceId) {
+  if (!enabled) return false;
+  if (!deviceId) return true;
+  return { deviceId: { exact: deviceId } };
+}
+
+function mapInputDevices(devices, kind) {
+  const labelPrefix = kind === 'audioinput' ? 'Microphone' : 'Camera';
+  return devices
+    .filter((device) => device.kind === kind)
+    .map((device, index) => ({
+      deviceId: device.deviceId,
+      label: device.label || `${labelPrefix} ${index + 1}`,
+    }));
+}
+
+async function enumerateInputDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    return { audio: [], video: [] };
+  }
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return {
+    audio: mapInputDevices(devices, 'audioinput'),
+    video: mapInputDevices(devices, 'videoinput'),
+  };
 }
 
 export default function Classroom() {
@@ -60,8 +100,22 @@ export default function Classroom() {
   const [sharing, setSharing] = useState(false);
   const [connected, setConnected] = useState(false);
   const [joining, setJoining] = useState(true);
+  const [roomChecked, setRoomChecked] = useState(false);
+  const [setupAttempt, setSetupAttempt] = useState(0);
+  const [setupStatus, setSetupStatus] = useState('Checking room availability');
   const [localStreamReady, setLocalStreamReady] = useState(false);
   const [error, setError] = useState(null);
+
+  const [previewStream, setPreviewStream] = useState(null);
+  const previewStreamRef = useRef(null);
+  const previewVideoRef = useRef(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const [audioDevices, setAudioDevices] = useState([]);
+  const [videoDevices, setVideoDevices] = useState([]);
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState('');
+  const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState('');
+  const [devicesLoading, setDevicesLoading] = useState(false);
 
   const [activeSidebar, setActiveSidebar] = useState(null);
   const [showWhiteboard, setShowWhiteboard] = useState(false);
@@ -85,11 +139,49 @@ export default function Classroom() {
   const whiteboardSignalHandler = useRef(null);
   const [duration, setDuration] = useState(0);
   const startTimeRef = useRef(Date.now());
+  const noticeTimerRef = useRef(null);
+
+  const showNotice = useCallback((type, text, timeout = 3200) => {
+    if (noticeTimerRef.current) {
+      window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
+    setUiNotice({ type, text });
+    if (timeout > 0) {
+      noticeTimerRef.current = window.setTimeout(() => {
+        setUiNotice(null);
+        noticeTimerRef.current = null;
+      }, timeout);
+    }
+  }, []);
+
+  const stopStream = useCallback((stream) => {
+    stream?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  const stopPreview = useCallback(() => {
+    if (previewStreamRef.current) {
+      stopStream(previewStreamRef.current);
+      previewStreamRef.current = null;
+    }
+    setPreviewStream(null);
+  }, [stopStream]);
+
+  const syncDeviceOptions = useCallback((nextAudioDevices, nextVideoDevices) => {
+    setAudioDevices(nextAudioDevices);
+    setVideoDevices(nextVideoDevices);
+    setSelectedAudioDeviceId((previous) => (
+      previous && nextAudioDevices.some((device) => device.deviceId === previous) ? previous : ''
+    ));
+    setSelectedVideoDeviceId((previous) => (
+      previous && nextVideoDevices.some((device) => device.deviceId === previous) ? previous : ''
+    ));
+  }, []);
 
   const appendUniqueMessages = useCallback((incomingMessages) => {
     if (!Array.isArray(incomingMessages) || incomingMessages.length === 0) return;
-    setMessages((prev) => {
-      const next = [...prev];
+    setMessages((previous) => {
+      const next = [...previous];
       for (const raw of incomingMessages) {
         const sender = raw.sender || 'Unknown';
         const content = raw.content || '';
@@ -104,87 +196,218 @@ export default function Classroom() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
     const update = () => {
       setCurrentTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-      setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      setDuration(connected ? Math.floor((Date.now() - startTimeRef.current) / 1000) : 0);
     };
     update();
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [connected]);
 
-  const formatDuration = (s) => {
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-    return `${m}:${String(sec).padStart(2, '0')}`;
+  useEffect(() => {
+    if (previewVideoRef.current && previewStream) {
+      previewVideoRef.current.srcObject = previewStream;
+    }
+  }, [previewStream]);
+
+  const formatDuration = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    return `${minutes}:${String(secs).padStart(2, '0')}`;
   };
 
-  // ── Connect to Janus ────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
+
     seenMessageKeysRef.current.clear();
     setMessages([]);
+    setUiNotice(null);
+    setError(null);
+    setConnected(false);
+    setJoining(true);
+    setRoomChecked(false);
+    setLocalStreamReady(false);
+    setActiveSidebar(null);
+    setShowWhiteboard(false);
+    setPinnedFeed(null);
+    setRemoteFeeds({});
+    setScreenShareFeeds({});
+    setRaisedHands({});
+    setHandRaised(false);
+    setSpotlightUserId(null);
+    setSharing(false);
+    setPreviewError('');
+    setAudioDevices([]);
+    setVideoDevices([]);
+    setSelectedAudioDeviceId('');
+    setSelectedVideoDeviceId('');
+    setDevicesLoading(false);
+    setSetupStatus('Checking meeting availability');
+    stopPreview();
+    janusService.destroy();
 
-    async function init() {
+    async function prepareRoom() {
       try {
-        const checkRes = await fetch(`${BACKEND_URL}/api/rooms/${roomId}`);
-        if (!checkRes.ok) {
-          const data = await checkRes.json().catch(() => ({}));
-          throw new Error(data.error || 'Room not found.');
+        const roomResponse = await fetch(`${BACKEND_URL}/api/rooms/${roomId}`);
+        if (!roomResponse.ok) {
+          const data = await roomResponse.json().catch(() => ({}));
+          throw new Error(data.error || 'Meeting not found.');
         }
+
+        if (cancelled) return;
+        setSetupStatus('Preparing GTS Meet session');
         await janusService.initLibrary();
-        await janusService.connect();
 
-        janusService.onLocalStream = (stream) => {
-          if (localVideoRef.current) { localVideoRef.current.srcObject = stream; setLocalStreamReady(true); }
-        };
-        janusService.onRemoteStream = (pubId, display, stream) => {
-          if (cancelled) return;
-          if (display?.endsWith('(screen)')) setScreenShareFeeds((p) => ({ ...p, [pubId]: { display, stream } }));
-          else setRemoteFeeds((p) => ({ ...p, [pubId]: { display, stream } }));
-        };
-        janusService.onRemoteGone = (pubId) => {
-          if (cancelled) return;
-          setRemoteFeeds((p) => { const c = { ...p }; delete c[pubId]; return c; });
-          setScreenShareFeeds((p) => { const c = { ...p }; delete c[pubId]; return c; });
-        };
-        janusService.onChatMessage = (msg) => { if (!cancelled) appendUniqueMessages([msg]); };
-        janusService.onError = (err) => { if (!cancelled) setError(typeof err === 'string' ? err : err?.message || 'Error'); };
-        janusService.onSignal = (signal) => { if (!cancelled) handleIncomingSignal(signal); };
-
-        await janusService.joinRoom(roomId, displayName.current);
-        try { await janusService.connectSignaling(roomId, token); } catch { if (!cancelled) { setUiNotice({ type: 'info', text: 'Signaling unavailable.' }); setTimeout(() => setUiNotice(null), 5000); } }
-        try { await janusService.joinTextRoom(roomId, displayName.current); } catch { /* fallback */ }
-
-        if (!cancelled) { setConnected(true); setJoining(false); }
+        if (cancelled) return;
+        setRoomChecked(true);
+        setJoining(false);
+        setSetupStatus('Ready to enter');
       } catch (err) {
-        if (!cancelled) { setError(typeof err === 'string' ? err : err?.message || 'Failed to connect'); setJoining(false); }
+        if (cancelled) return;
+        setError(typeof err === 'string' ? err : err?.message || 'Unable to prepare this meeting.');
+        setJoining(false);
+        setSetupStatus('Setup blocked');
       }
     }
-    init();
-    return () => { cancelled = true; janusService.destroy(); };
-  }, [roomId, token, appendUniqueMessages]);
 
-  // ── Handle signals ──────────────────────────────────────
+    prepareRoom();
+
+    return () => {
+      cancelled = true;
+      stopPreview();
+      janusService.destroy();
+    };
+  }, [roomId, setupAttempt, stopPreview]);
+
+  useEffect(() => {
+    if (!roomChecked || connected || !navigator.mediaDevices?.enumerateDevices) return;
+
+    let cancelled = false;
+    const mediaDevices = navigator.mediaDevices;
+
+    const loadDevices = async () => {
+      setDevicesLoading(true);
+      try {
+        const { audio, video } = await enumerateInputDevices();
+        if (cancelled) return;
+        syncDeviceOptions(audio, video);
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('[Classroom] Unable to enumerate media devices:', err);
+        }
+      } finally {
+        if (!cancelled) {
+          setDevicesLoading(false);
+        }
+      }
+    };
+
+    loadDevices().catch(() => undefined);
+
+    const handleDeviceChange = () => {
+      loadDevices().catch(() => undefined);
+    };
+
+    if (typeof mediaDevices.addEventListener === 'function') {
+      mediaDevices.addEventListener('devicechange', handleDeviceChange);
+    }
+
+    return () => {
+      cancelled = true;
+      if (typeof mediaDevices.removeEventListener === 'function') {
+        mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+      }
+    };
+  }, [roomChecked, connected, syncDeviceOptions]);
+
+  useEffect(() => {
+    if (!roomChecked || connected || joining) return;
+
+    let cancelled = false;
+    stopPreview();
+    setPreviewError('');
+
+    if (!micOn && !camOn) {
+      setPreviewLoading(false);
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setPreviewLoading(false);
+      setPreviewError('This browser cannot open a camera or microphone preview.');
+      return;
+    }
+
+    setPreviewLoading(true);
+    navigator.mediaDevices.getUserMedia({
+      audio: buildMediaConstraint(micOn, selectedAudioDeviceId),
+      video: buildMediaConstraint(camOn, selectedVideoDeviceId),
+    })
+      .then((stream) => {
+        if (cancelled) {
+          stopStream(stream);
+          return;
+        }
+        previewStreamRef.current = stream;
+        setPreviewStream(stream);
+        setPreviewLoading(false);
+
+        if (navigator.mediaDevices?.enumerateDevices) {
+          enumerateInputDevices()
+            .then(({ audio, video }) => {
+              if (cancelled) return;
+              syncDeviceOptions(audio, video);
+            })
+            .catch(() => undefined);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setPreviewLoading(false);
+        setPreviewError(resolveMediaAccessError(err, { audio: micOn, video: camOn }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomChecked, connected, joining, micOn, camOn, selectedAudioDeviceId, selectedVideoDeviceId, stopPreview, stopStream, syncDeviceOptions]);
+
   const handleIncomingSignal = useCallback((signal) => {
     switch (signal.type) {
       case 'hand-raise':
-        setRaisedHands((prev) => {
-          if (signal.raised) return { ...prev, [signal.senderName || signal.display]: true };
-          const c = { ...prev }; delete c[signal.senderName || signal.display]; return c;
+        setRaisedHands((previous) => {
+          if (signal.raised) return { ...previous, [signal.senderName || signal.display]: true };
+          const next = { ...previous };
+          delete next[signal.senderName || signal.display];
+          return next;
         });
         break;
       case 'mute-all':
-        if (!isTrainer) { setMicOn(false); janusService.toggleAudio(true); setUiNotice({ type: 'info', text: `${signal.trainerName || 'Trainer'} muted everyone.` }); setTimeout(() => setUiNotice(null), 4000); }
+        if (!isTrainer) {
+          setMicOn(false);
+          janusService.toggleAudio(true);
+          showNotice('info', `${signal.trainerName || 'Host'} muted everyone.`, 4000);
+        }
         break;
       case 'force-mute':
-        setMicOn(false); janusService.toggleAudio(true);
-        setUiNotice({ type: 'info', text: `Muted by ${signal.trainerName || 'trainer'}.` }); setTimeout(() => setUiNotice(null), 4000);
+        setMicOn(false);
+        janusService.toggleAudio(true);
+        showNotice('info', `Muted by ${signal.trainerName || 'host'}.`, 4000);
         break;
       case 'kicked':
-        janusService.destroy(); setError('You were removed from this class.');
+        janusService.destroy();
+        setError('You were removed from this meeting.');
+        setConnected(false);
+        setRoomChecked(true);
         break;
       case 'spotlight':
         setSpotlightUserId(signal.targetUserId);
@@ -194,98 +417,293 @@ export default function Classroom() {
         break;
       case 'dismiss-hand':
         setHandRaised(false);
-        setUiNotice({ type: 'info', text: 'Your hand was lowered by the trainer.' }); setTimeout(() => setUiNotice(null), 3000);
+        showNotice('info', 'Your hand was lowered by the host.');
         break;
       case 'end-class':
-        setUiNotice({ type: 'error', text: 'The class has ended.' });
-        setTimeout(() => { janusService.destroy(); navigate('/'); }, 3000);
+        showNotice('error', 'This meeting has ended.', 2600);
+        setTimeout(() => {
+          janusService.destroy();
+          navigate('/');
+        }, 2800);
         break;
       case 'participant-joined':
-        setUiNotice({ type: 'info', text: `${signal.displayName} joined.` }); setTimeout(() => setUiNotice(null), 3000);
+        showNotice('info', `${signal.displayName} joined the session.`);
         break;
       case 'participant-left':
-        setUiNotice({ type: 'info', text: `${signal.displayName} left.` }); setTimeout(() => setUiNotice(null), 3000);
+        showNotice('info', `${signal.displayName} left the session.`);
         break;
-      case 'wb-delta': case 'wb-snapshot': case 'wb-request-snapshot':
+      case 'wb-delta':
+      case 'wb-snapshot':
+      case 'wb-request-snapshot':
         whiteboardSignalHandler.current?.(signal);
         break;
-      default: break;
+      default:
+        break;
     }
-  }, [isTrainer, navigate]);
+  }, [isTrainer, navigate, showNotice]);
 
-  // Poll chat
+  const handleEnterRoom = useCallback(async () => {
+    if (!roomChecked || joining) return;
+
+    setJoining(true);
+    setError(null);
+    setSetupStatus('Connecting to media gateway');
+    setLocalStreamReady(false);
+    stopPreview();
+
+    try {
+      await janusService.connect();
+      janusService.initialPublishOptions = {
+        audio: micOn,
+        video: camOn,
+        audioDeviceId: selectedAudioDeviceId || undefined,
+        videoDeviceId: selectedVideoDeviceId || undefined,
+      };
+
+      janusService.onLocalStream = (stream) => {
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+        setLocalStreamReady(true);
+      };
+      janusService.onRemoteStream = (publisherId, display, stream) => {
+        if (display?.endsWith('(screen)')) {
+          setScreenShareFeeds((previous) => ({ ...previous, [publisherId]: { display, stream } }));
+          return;
+        }
+        setRemoteFeeds((previous) => ({ ...previous, [publisherId]: { display, stream } }));
+      };
+      janusService.onRemoteGone = (publisherId) => {
+        setRemoteFeeds((previous) => {
+          const next = { ...previous };
+          delete next[publisherId];
+          return next;
+        });
+        setScreenShareFeeds((previous) => {
+          const next = { ...previous };
+          delete next[publisherId];
+          return next;
+        });
+      };
+      janusService.onChatMessage = (message) => appendUniqueMessages([message]);
+      janusService.onError = (err) => setError(typeof err === 'string' ? err : err?.message || 'Error');
+      janusService.onSignal = (signal) => handleIncomingSignal(signal);
+
+      setSetupStatus('Joining GTS Meet session');
+      await janusService.joinRoom(roomId, displayName.current);
+
+      setSetupStatus('Connecting session signals');
+      try {
+        await janusService.connectSignaling(roomId, token);
+      } catch {
+        showNotice('info', 'Live signaling is unavailable. Core media will still load.', 4200);
+      }
+
+      setSetupStatus('Starting session conversation');
+      try {
+        await janusService.joinTextRoom(roomId, displayName.current);
+      } catch {
+        showNotice('info', 'Session chat is reconnecting. Messages may take a moment to appear.', 4000);
+      }
+
+      startTimeRef.current = Date.now();
+      setConnected(true);
+      setSetupStatus('Connected');
+    } catch (err) {
+      janusService.destroy();
+      setConnected(false);
+      setError(typeof err === 'string' ? err : err?.message || 'Failed to connect to the meeting.');
+      setSetupStatus('Unable to connect');
+    } finally {
+      setJoining(false);
+    }
+  }, [appendUniqueMessages, camOn, handleIncomingSignal, joining, micOn, roomChecked, roomId, selectedAudioDeviceId, selectedVideoDeviceId, showNotice, stopPreview, token]);
+
   useEffect(() => {
+    if (!connected) return;
     let cancelled = false;
+
     const poll = async () => {
       try {
         const res = await fetch(`${BACKEND_URL}/api/rooms/${roomId}/messages?limit=200`);
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled || !data?.success) return;
-        appendUniqueMessages(data.messages.map((m) => ({ id: m.id, sender: m.sender, content: m.content, timestamp: m.createdAt })));
-      } catch { /* silent */ }
+        appendUniqueMessages(data.messages.map((message) => ({
+          id: message.id,
+          sender: message.sender,
+          content: message.content,
+          timestamp: message.createdAt,
+        })));
+      } catch {
+        return;
+      }
     };
+
     poll();
     const interval = setInterval(poll, 2000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [roomId, appendUniqueMessages]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [appendUniqueMessages, connected, roomId]);
 
-  useEffect(() => { if (activeSidebar === 'chat') chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, activeSidebar]);
+  useEffect(() => {
+    if (activeSidebar === 'chat') chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, activeSidebar]);
 
-  // ── Handlers ────────────────────────────────────────────
-  const handleToggleMic = useCallback(() => { const n = !micOn; setMicOn(n); janusService.toggleAudio(!n); }, [micOn]);
-  const handleToggleCam = useCallback(() => { const n = !camOn; setCamOn(n); janusService.toggleVideo(!n); }, [camOn]);
+  const handleToggleMic = useCallback(() => {
+    const next = !micOn;
+    setMicOn(next);
+    if (connected) janusService.toggleAudio(!next);
+  }, [connected, micOn]);
+
+  const handleToggleCam = useCallback(() => {
+    const next = !camOn;
+    setCamOn(next);
+    if (connected) janusService.toggleVideo(!next);
+  }, [camOn, connected]);
+
   const handleScreenShare = useCallback(async () => {
-    if (sharing) { janusService.stopScreenShare(); setSharing(false); }
-    else { try { await janusService.startScreenShare(roomId, displayName.current); setSharing(true); setShowWhiteboard(false); } catch { setUiNotice({ type: 'error', text: 'Screen share failed.' }); setTimeout(() => setUiNotice(null), 4000); } }
-  }, [sharing, roomId]);
-  const toggleWhiteboard = useCallback(() => { setShowWhiteboard((p) => !p); if (!showWhiteboard && sharing) { janusService.stopScreenShare(); setSharing(false); } if (!showWhiteboard) setPinnedFeed(null); }, [showWhiteboard, sharing]);
-  const toggleSidebar = (s) => setActiveSidebar(activeSidebar === s ? null : s);
-  const handleSendChat = useCallback((e) => {
-    e.preventDefault(); if (!chatInput.trim()) return;
-    const msg = chatInput.trim();
-    janusService.sendChatMessage(roomId, msg);
-    fetch(`${BACKEND_URL}/api/rooms/${roomId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sender: displayName.current, content: msg }) }).catch(() => {});
+    if (sharing) {
+      janusService.stopScreenShare();
+      setSharing(false);
+      return;
+    }
+
+    try {
+      await janusService.startScreenShare(roomId, displayName.current);
+      setSharing(true);
+      setShowWhiteboard(false);
+    } catch {
+      showNotice('error', 'Screen share failed.', 4000);
+    }
+  }, [roomId, sharing, showNotice]);
+
+  const toggleWhiteboard = useCallback(() => {
+    setShowWhiteboard((previous) => !previous);
+    if (!showWhiteboard && sharing) {
+      janusService.stopScreenShare();
+      setSharing(false);
+    }
+    if (!showWhiteboard) setPinnedFeed(null);
+  }, [sharing, showWhiteboard]);
+
+  const toggleSidebar = (section) => setActiveSidebar(activeSidebar === section ? null : section);
+
+  const handleSendChat = useCallback((event) => {
+    event.preventDefault();
+    if (!chatInput.trim()) return;
+    const message = chatInput.trim();
+    janusService.sendChatMessage(roomId, message);
+    fetch(`${BACKEND_URL}/api/rooms/${roomId}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sender: displayName.current, content: message }),
+    }).catch(() => {});
     setChatInput('');
   }, [chatInput, roomId]);
+
   const handleLeave = useCallback(() => {
     if (handRaised) janusService.sendSignal(roomId, { type: 'hand-raise', raised: false, display: displayName.current });
-    janusService.destroy(); navigate('/');
-  }, [navigate, handRaised, roomId]);
-  const handleToggleHand = useCallback(() => { const n = !handRaised; setHandRaised(n); janusService.sendSignal(roomId, { type: 'hand-raise', raised: n, display: displayName.current }); }, [handRaised, roomId]);
-  const handlePin = useCallback((f) => { setPinnedFeed((p) => (p && p.pubId === f.pubId && p.type === f.type) ? null : f); setShowWhiteboard(false); }, []);
+    janusService.destroy();
+    navigate('/');
+  }, [handRaised, navigate, roomId]);
+
+  const handleToggleHand = useCallback(() => {
+    const next = !handRaised;
+    setHandRaised(next);
+    janusService.sendSignal(roomId, { type: 'hand-raise', raised: next, display: displayName.current });
+  }, [handRaised, roomId]);
+
+  const handlePin = useCallback((feed) => {
+    setPinnedFeed((previous) => (previous && previous.pubId === feed.pubId && previous.type === feed.type ? null : feed));
+    setShowWhiteboard(false);
+  }, []);
+
   const handleUnpin = useCallback(() => setPinnedFeed(null), []);
   const handleSendSignal = useCallback((payload) => janusService.sendSignal(roomId, payload), [roomId]);
+  const handleRetrySetup = useCallback(() => setSetupAttempt((value) => value + 1), []);
 
-  // ── Trainer Commands ────────────────────────────────────
-  const handleMuteAll = useCallback(() => { janusService.sendSignal(roomId, { type: 'mute-all' }); setUiNotice({ type: 'info', text: 'All participants muted.' }); setTimeout(() => setUiNotice(null), 3000); }, [roomId]);
-  const handleForceMute = useCallback((uid) => janusService.sendSignal(roomId, { type: 'force-mute', targetUserId: uid }), [roomId]);
-  const handleKick = useCallback((uid) => janusService.sendSignal(roomId, { type: 'kick', targetUserId: uid }), [roomId]);
-  const handleSpotlight = useCallback((uid) => { janusService.sendSignal(roomId, { type: 'spotlight', targetUserId: uid }); setSpotlightUserId(uid); }, [roomId]);
-  const handleClearSpotlight = useCallback(() => { janusService.sendSignal(roomId, { type: 'clear-spotlight' }); setSpotlightUserId(null); }, [roomId]);
-  const handleDismissHand = useCallback((uid) => janusService.sendSignal(roomId, { type: 'dismiss-hand', targetUserId: uid }), [roomId]);
-  const handleEndClass = useCallback(() => { janusService.sendSignal(roomId, { type: 'end-class' }); setTimeout(() => { janusService.destroy(); navigate('/'); }, 1000); }, [roomId, navigate]);
+  const handleMuteAll = useCallback(() => {
+    janusService.sendSignal(roomId, { type: 'mute-all' });
+    showNotice('info', 'All participants muted.');
+  }, [roomId, showNotice]);
 
-  // Layout
+  const handleForceMute = useCallback((userId) => janusService.sendSignal(roomId, { type: 'force-mute', targetUserId: userId }), [roomId]);
+  const handleKick = useCallback((userId) => janusService.sendSignal(roomId, { type: 'kick', targetUserId: userId }), [roomId]);
+  const handleSpotlight = useCallback((userId) => {
+    janusService.sendSignal(roomId, { type: 'spotlight', targetUserId: userId });
+    setSpotlightUserId(userId);
+  }, [roomId]);
+  const handleClearSpotlight = useCallback(() => {
+    janusService.sendSignal(roomId, { type: 'clear-spotlight' });
+    setSpotlightUserId(null);
+  }, [roomId]);
+  const handleDismissHand = useCallback((userId) => janusService.sendSignal(roomId, { type: 'dismiss-hand', targetUserId: userId }), [roomId]);
+  const handleEndClass = useCallback(() => {
+    janusService.sendSignal(roomId, { type: 'end-class' });
+    setTimeout(() => {
+      janusService.destroy();
+      navigate('/');
+    }, 1000);
+  }, [navigate, roomId]);
+
   const remoteEntries = Object.entries(remoteFeeds);
   const screenShareEntries = Object.entries(screenShareFeeds);
   const totalFeeds = 1 + remoteEntries.length;
   const hasPresentation = showWhiteboard || sharing || screenShareEntries.length > 0 || pinnedFeed !== null;
   const raisedHandCount = Object.keys(raisedHands).length + (handRaised ? 1 : 0);
+  const sessionStateLabel = joining ? 'Joining session' : connected ? 'Connected' : roomChecked ? 'Ready to join' : 'Preparing';
+  const roomModeLabel = showWhiteboard
+    ? 'Whiteboard live'
+    : pinnedFeed
+      ? 'Focused stage'
+      : sharing || screenShareEntries.length > 0
+        ? 'Presentation live'
+        : 'Gallery view';
+
+  const prejoinMediaStatus = !micOn && !camOn
+    ? 'Joining with microphone and camera off.'
+    : previewLoading
+      ? 'Checking camera and microphone access...'
+      : previewError
+        ? previewError
+        : camOn && micOn
+          ? 'Camera and microphone are ready.'
+          : camOn
+            ? 'Camera is ready. Microphone is muted for entry.'
+            : 'Microphone is ready. Camera is off for entry.';
+
+  const canEnterRoom = roomChecked && !joining && (!previewError || (!micOn && !camOn));
+    const deviceSelectorSupported = typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.enumerateDevices);
+    const audioDeviceHint = !deviceSelectorSupported
+      ? 'This browser can only use the default microphone.'
+      : devicesLoading
+        ? 'Refreshing microphone list...'
+        : micOn
+          ? 'Choose which microphone to use when you join.'
+          : 'Microphone is muted for entry, but you can choose it now.';
+    const videoDeviceHint = !deviceSelectorSupported
+      ? 'This browser can only use the default camera.'
+      : devicesLoading
+        ? 'Refreshing camera list...'
+        : camOn
+          ? 'Choose which camera to use when you join.'
+          : 'Camera is off for entry, but you can choose it now.';
 
   useEffect(() => {
     if (pinnedFeed?.type === 'remote' && pinnedFeed.pubId && !remoteFeeds[pinnedFeed.pubId]) setPinnedFeed(null);
     if (pinnedFeed?.type === 'screen' && pinnedFeed.pubId && !screenShareFeeds[pinnedFeed.pubId]) setPinnedFeed(null);
   }, [remoteFeeds, screenShareFeeds, pinnedFeed]);
 
-  // ── Render ──────────────────────────────────────────────
   const renderVideoGrid = () => {
     let gridClass = 'teams-video-grid';
     if (hasPresentation) gridClass += ' teams-video-grid--filmstrip';
     else if (totalFeeds <= 2) gridClass += ' teams-video-grid--few';
     else gridClass += ' teams-video-grid--gallery';
 
-    const filteredRemote = remoteEntries.filter(([pubId]) => !(pinnedFeed?.type === 'remote' && pinnedFeed.pubId === pubId));
+    const filteredRemote = remoteEntries.filter(([publisherId]) => !(pinnedFeed?.type === 'remote' && pinnedFeed.pubId === publisherId));
 
     return (
       <div className={gridClass}>
@@ -299,16 +717,174 @@ export default function Classroom() {
             </div>
             {handRaised && <div className="teams-hand-badge"><IconHandRaise /></div>}
             <button className="teams-pin-btn" onClick={() => handlePin({ type: 'local', pubId: 'local', display: displayName.current, stream: localVideoRef.current?.srcObject })} title="Pin"><IconPin /></button>
-            {(!localStreamReady && !error) && <div className="teams-tile__overlay"><div className="spinner" /></div>}
-            {error && <div className="teams-tile__overlay teams-tile__overlay--error"><IconWarning /><p>{error}</p></div>}
+            {!localStreamReady && !error && (
+              <div className="teams-tile__overlay">
+                <div className="spinner" />
+                <p>Connecting your camera and microphone...</p>
+              </div>
+            )}
+            {error && (
+              <div className="teams-tile__overlay teams-tile__overlay--error">
+                <IconWarning />
+                <p>{error}</p>
+              </div>
+            )}
           </div>
         )}
-        {filteredRemote.map(([pubId, { display, stream }]) => (
-          <RemoteVideo key={pubId} pubId={pubId} display={display} stream={stream} handRaised={!!raisedHands[display]} onPin={() => handlePin({ type: 'remote', pubId, display, stream })} />
+        {filteredRemote.map(([publisherId, { display, stream }]) => (
+          <RemoteVideo key={publisherId} pubId={publisherId} display={display} stream={stream} handRaised={!!raisedHands[display]} onPin={() => handlePin({ type: 'remote', pubId: publisherId, display, stream })} />
         ))}
       </div>
     );
   };
+
+  if (!connected) {
+    return (
+      <div className="teams-classroom teams-classroom--prejoin">
+        {uiNotice && (
+          <div className={`teams-toast teams-toast--${uiNotice.type}`}>
+            {uiNotice.text}
+            <button className="teams-toast__close" onClick={() => setUiNotice(null)}><IconClose /></button>
+          </div>
+        )}
+
+        <div className="teams-prejoin-shell">
+          <div className="teams-prejoin-topbar">
+            <div className="teams-brand">
+              <span className="teams-brand__mark" />
+              <div className="teams-brand__copy">
+                <span className="teams-brand__name">GTS Meet</span>
+                <span className="teams-brand__sub">Standalone meeting / {roomId}</span>
+              </div>
+            </div>
+
+            <div className="teams-prejoin-topbar__meta">
+              <span className="teams-header__chip">{setupStatus}</span>
+              <span className="teams-header__chip">{currentTime}</span>
+            </div>
+          </div>
+
+          <div className="teams-prejoin">
+            <section className="teams-prejoin__content">
+              <span className="teams-prejoin__eyebrow">Pre-join check</span>
+              <h1>Check your devices, then join the standalone GTS Meet session.</h1>
+              <p>
+                Local media check, session readiness, and mobile controls stay inside the standalone product before you enter.
+              </p>
+
+              <div className="teams-prejoin__status-grid">
+                <article className="teams-prejoin__status-card">
+                  <span>Session</span>
+                  <strong>{roomChecked ? 'Verified and ready' : joining ? 'Checking availability' : 'Waiting for setup'}</strong>
+                </article>
+                <article className="teams-prejoin__status-card">
+                  <span>Media</span>
+                  <strong>{previewLoading ? 'Checking devices' : previewError ? 'Needs attention' : 'Ready for entry'}</strong>
+                </article>
+                <article className="teams-prejoin__status-card">
+                  <span>Role</span>
+                  <strong>{isTrainer ? 'Host moderation tools' : 'Participant controls'}</strong>
+                </article>
+              </div>
+
+              <div className={`teams-prejoin__notice ${error ? 'teams-prejoin__notice--error' : previewError ? 'teams-prejoin__notice--warn' : ''}`}>
+                <strong>{error ? 'Session setup issue' : 'Media readiness'}</strong>
+                <p>{error || prejoinMediaStatus}</p>
+              </div>
+
+              <div className="teams-prejoin__actions">
+                <button className="teams-prejoin__primary" type="button" onClick={handleEnterRoom} disabled={!canEnterRoom}>
+                  {joining ? <><span className="spinner" /> Connecting...</> : 'Join GTS Meet'}
+                </button>
+                <button className="teams-prejoin__secondary" type="button" onClick={handleRetrySetup}>
+                  Retry setup
+                </button>
+                <button className="teams-prejoin__ghost" type="button" onClick={() => navigate('/')}>
+                  Back to landing
+                </button>
+              </div>
+            </section>
+
+            <aside className="teams-prejoin__preview-panel">
+              <div className="teams-prejoin__preview-frame">
+                {previewStream && camOn ? (
+                  <video ref={previewVideoRef} autoPlay playsInline muted className="teams-prejoin__preview-video" />
+                ) : (
+                  <div className="teams-prejoin__preview-empty">
+                    <div className="teams-prejoin__avatar">{buildInitials(displayName.current)}</div>
+                    <h3>{previewLoading ? 'Opening your preview' : 'Preview staged'}</h3>
+                    <p>
+                      {camOn
+                        ? 'Your camera preview will appear here once device access is ready.'
+                        : 'Camera is off for entry. You can still join with audio or no devices.'}
+                    </p>
+                  </div>
+                )}
+
+                {(previewLoading || joining) && (
+                  <div className="teams-prejoin__preview-overlay">
+                    <div className="spinner" />
+                    <p>{joining ? setupStatus : 'Checking your devices'}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="teams-prejoin__toggle-row">
+                <button className={`teams-prejoin__toggle ${micOn ? 'teams-prejoin__toggle--active' : ''}`} type="button" onClick={handleToggleMic}>
+                  {micOn ? <IconMic /> : <IconMicOff />}
+                  <span>{micOn ? 'Mic ready' : 'Mic muted'}</span>
+                </button>
+                <button className={`teams-prejoin__toggle ${camOn ? 'teams-prejoin__toggle--active' : ''}`} type="button" onClick={handleToggleCam}>
+                  {camOn ? <IconCam /> : <IconCamOff />}
+                  <span>{camOn ? 'Camera ready' : 'Camera off'}</span>
+                </button>
+              </div>
+
+              <div className="teams-prejoin__device-grid">
+                <label className="teams-prejoin__device-field">
+                  <span className="teams-prejoin__device-label">Microphone source</span>
+                  <select
+                    className="teams-prejoin__device-select"
+                    value={selectedAudioDeviceId}
+                    onChange={(event) => setSelectedAudioDeviceId(event.target.value)}
+                    disabled={!deviceSelectorSupported}
+                  >
+                    <option value="">Browser default microphone</option>
+                    {audioDevices.map((device) => (
+                      <option key={device.deviceId} value={device.deviceId}>{device.label}</option>
+                    ))}
+                  </select>
+                  <span className="teams-prejoin__device-hint">{audioDeviceHint}</span>
+                </label>
+
+                <label className="teams-prejoin__device-field">
+                  <span className="teams-prejoin__device-label">Camera source</span>
+                  <select
+                    className="teams-prejoin__device-select"
+                    value={selectedVideoDeviceId}
+                    onChange={(event) => setSelectedVideoDeviceId(event.target.value)}
+                    disabled={!deviceSelectorSupported}
+                  >
+                    <option value="">Browser default camera</option>
+                    {videoDevices.map((device) => (
+                      <option key={device.deviceId} value={device.deviceId}>{device.label}</option>
+                    ))}
+                  </select>
+                  <span className="teams-prejoin__device-hint">{videoDeviceHint}</span>
+                </label>
+              </div>
+
+              <div className="teams-prejoin__feature-list">
+                <span>Host spotlight tools</span>
+                <span>Live chat and roster</span>
+                <span>Screen share and board</span>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="teams-classroom">
@@ -319,30 +895,40 @@ export default function Classroom() {
         </div>
       )}
 
-      {/* Header */}
       <div className="teams-header">
         <div className="teams-header__left">
-          <div className="teams-live-indicator"><span className="teams-live-dot" /><span>LIVE</span></div>
-          <span className="teams-header__title">{isTrainer ? 'Live Class' : 'Class'} — Room {roomId}</span>
+          <div className="teams-brand">
+            <span className="teams-brand__mark" />
+            <div className="teams-brand__copy">
+              <span className="teams-brand__name">GTS Meet</span>
+              <span className="teams-brand__sub">{isTrainer ? 'Host studio' : 'Standalone meeting'} / Session {roomId}</span>
+            </div>
+          </div>
+          <div className="teams-live-indicator"><span className="teams-live-dot" /><span>ON AIR</span></div>
+          <span className="teams-header__title">{roomModeLabel}</span>
           <span className="teams-header__duration">{formatDuration(duration)}</span>
         </div>
         <div className="teams-header__right">
+          <span className="teams-header__chip">{sessionStateLabel}</span>
+          <span className="teams-header__chip">{isTrainer ? 'Host controls' : 'Participant view'}</span>
           <span className="teams-header__count"><IconPeople /> {totalFeeds}</span>
           <span className="teams-header__time">{currentTime}</span>
         </div>
       </div>
 
-      {/* Main */}
       <div className="teams-main">
         {hasPresentation && (
           <div className="teams-stage">
             {showWhiteboard && <WhiteboardSync roomId={roomId} sendSignal={handleSendSignal} signalBus={whiteboardSignalHandler} />}
             {pinnedFeed && !showWhiteboard && (
-              <div className="teams-pinned"><PinnedVideo feed={pinnedFeed} /><button className="teams-unpin-btn" onClick={handleUnpin}><IconUnpin /> Unpin</button></div>
+              <div className="teams-pinned">
+                <PinnedVideo feed={pinnedFeed} />
+                <button className="teams-unpin-btn" onClick={handleUnpin}><IconUnpin /> Unpin</button>
+              </div>
             )}
-            {!pinnedFeed && !showWhiteboard && screenShareEntries.map(([pubId, { display, stream }]) => (
-              <div key={`screen-${pubId}`} className="teams-pinned">
-                <RemoteVideo pubId={pubId} display={display} stream={stream} handRaised={false} onPin={() => handlePin({ type: 'screen', pubId, display, stream })} />
+            {!pinnedFeed && !showWhiteboard && screenShareEntries.map(([publisherId, { display, stream }]) => (
+              <div key={`screen-${publisherId}`} className="teams-pinned">
+                <RemoteVideo pubId={publisherId} display={display} stream={stream} handRaised={false} onPin={() => handlePin({ type: 'screen', pubId: publisherId, display, stream })} />
               </div>
             ))}
           </div>
@@ -354,25 +940,25 @@ export default function Classroom() {
 
         {activeSidebar && (
           <div className="teams-sidebar">
-            <div className="teams-sidebar__head"><h3>{activeSidebar === 'chat' ? 'Chat' : 'Participants'}</h3><button onClick={() => setActiveSidebar(null)}><IconClose /></button></div>
+            <div className="teams-sidebar__head"><h3>{activeSidebar === 'chat' ? 'Conversation' : 'Session roster'}</h3><button onClick={() => setActiveSidebar(null)}><IconClose /></button></div>
             {activeSidebar === 'chat' && (
               <div className="teams-chat">
                 <div className="teams-chat__list">
-                  {messages.length === 0 && <p className="teams-chat__empty">No messages yet.</p>}
-                  {messages.map((m, i) => (
-                    <div key={i} className={`teams-msg ${m.self ? 'teams-msg--self' : ''}`}>
-                      {!m.self && <div className="teams-msg__avatar">{(m.sender || 'P')[0].toUpperCase()}</div>}
+                  {messages.length === 0 && <p className="teams-chat__empty">Session messages will appear here as people join.</p>}
+                  {messages.map((message, index) => (
+                    <div key={index} className={`teams-msg ${message.self ? 'teams-msg--self' : ''}`}>
+                      {!message.self && <div className="teams-msg__avatar">{(message.sender || 'P')[0].toUpperCase()}</div>}
                       <div className="teams-msg__body">
-                        {!m.self && <span className="teams-msg__sender">{m.sender}</span>}
-                        <div className="teams-msg__bubble">{DOMPurify.sanitize(m.content)}</div>
-                        <span className="teams-msg__time">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        {!message.self && <span className="teams-msg__sender">{message.sender}</span>}
+                        <div className="teams-msg__bubble">{DOMPurify.sanitize(message.content)}</div>
+                        <span className="teams-msg__time">{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     </div>
                   ))}
                   <div ref={chatEndRef} />
                 </div>
                 <form className="teams-chat__form" onSubmit={handleSendChat}>
-                  <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type a message..." />
+                  <input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Send a note to the session" />
                   <button type="submit" disabled={!chatInput.trim()}><IconSend /></button>
                 </form>
               </div>
@@ -381,21 +967,24 @@ export default function Classroom() {
               <div className="teams-people">
                 <div className="teams-person">
                   <div className="teams-person__av">{displayName.current[0].toUpperCase()}</div>
-                  <div className="teams-person__info"><span className="teams-person__name">{displayName.current} (You)</span><span className={`teams-person__role teams-person__role--${userRole}`}>{isTrainer ? 'Trainer' : 'Candidate'}</span></div>
+                  <div className="teams-person__info">
+                    <span className="teams-person__name">{displayName.current} (You)</span>
+                    <span className={`teams-person__role teams-person__role--${userRole}`}>{isTrainer ? 'Host' : 'Participant'}</span>
+                  </div>
                   <div className="teams-person__acts">{handRaised && <IconHandRaise />}{!micOn && <IconMicOff />}</div>
                 </div>
-                {remoteEntries.map(([pubId, { display }]) => (
-                  <div className="teams-person" key={pubId}>
+                {remoteEntries.map(([publisherId, { display }]) => (
+                  <div className="teams-person" key={publisherId}>
                     <div className="teams-person__av">{(display || 'P')[0].toUpperCase()}</div>
                     <div className="teams-person__info"><span className="teams-person__name">{display || 'Participant'}</span></div>
                     <div className="teams-person__acts">
                       {raisedHands[display] && <span className="teams-person__hand"><IconHandRaise /></span>}
                       {isTrainer && (
                         <div className="teams-person__trainer-btns">
-                          <button onClick={() => handleForceMute(pubId)} title="Mute"><IconMicOff /></button>
-                          <button onClick={() => handleSpotlight(pubId)} title="Spotlight"><IconSpotlight /></button>
-                          {raisedHands[display] && <button onClick={() => handleDismissHand(pubId)} title="Lower hand"><IconHandRaise /></button>}
-                          <button className="teams-btn-danger" onClick={() => handleKick(pubId)} title="Remove"><IconKick /></button>
+                          <button onClick={() => handleForceMute(publisherId)} title="Mute"><IconMicOff /></button>
+                          <button onClick={() => handleSpotlight(publisherId)} title="Spotlight"><IconSpotlight /></button>
+                          {raisedHands[display] && <button onClick={() => handleDismissHand(publisherId)} title="Lower hand"><IconHandRaise /></button>}
+                          <button className="teams-btn-danger" onClick={() => handleKick(publisherId)} title="Remove"><IconKick /></button>
                         </div>
                       )}
                     </div>
@@ -407,33 +996,32 @@ export default function Classroom() {
         )}
       </div>
 
-      {/* Controls */}
       <div className="teams-controls">
         <div className="teams-controls__left">
           {isTrainer && (
             <>
-              <button className="teams-ctrl teams-ctrl--warn" onClick={handleMuteAll} title="Mute all"><IconMuteAll /><span>Mute All</span></button>
-              {spotlightUserId && <button className="teams-ctrl" onClick={handleClearSpotlight} title="Clear spotlight"><IconSpotlight /><span>Clear</span></button>}
+              <button className="teams-ctrl teams-ctrl--warn" onClick={handleMuteAll} title="Mute all"><IconMuteAll /><span>Mute all</span></button>
+              {spotlightUserId && <button className="teams-ctrl" onClick={handleClearSpotlight} title="Clear spotlight"><IconSpotlight /><span>Clear stage</span></button>}
             </>
           )}
         </div>
         <div className="teams-controls__center">
-          <button className={`teams-ctrl ${!micOn ? 'teams-ctrl--off' : ''}`} onClick={handleToggleMic} title={micOn ? 'Mute' : 'Unmute'}>{micOn ? <IconMic /> : <IconMicOff />}</button>
-          <button className={`teams-ctrl ${!camOn ? 'teams-ctrl--off' : ''}`} onClick={handleToggleCam} title={camOn ? 'Camera off' : 'Camera on'}>{camOn ? <IconCam /> : <IconCamOff />}</button>
-          <button className={`teams-ctrl ${sharing ? 'teams-ctrl--active' : ''}`} onClick={handleScreenShare} title="Share screen"><IconScreenShare /></button>
-          <button className={`teams-ctrl ${showWhiteboard ? 'teams-ctrl--active' : ''}`} onClick={toggleWhiteboard} title="Whiteboard"><IconWhiteboard /></button>
-          <button className={`teams-ctrl ${handRaised ? 'teams-ctrl--active' : ''}`} onClick={handleToggleHand} title={handRaised ? 'Lower hand' : 'Raise hand'}><IconHandRaise /></button>
+          <button className={`teams-ctrl ${!micOn ? 'teams-ctrl--off' : ''}`} onClick={handleToggleMic} title={micOn ? 'Mute' : 'Unmute'}>{micOn ? <IconMic /> : <IconMicOff />}<span>{micOn ? 'Mic on' : 'Mic off'}</span></button>
+          <button className={`teams-ctrl ${!camOn ? 'teams-ctrl--off' : ''}`} onClick={handleToggleCam} title={camOn ? 'Camera off' : 'Camera on'}>{camOn ? <IconCam /> : <IconCamOff />}<span>{camOn ? 'Camera on' : 'Camera off'}</span></button>
+          <button className={`teams-ctrl ${sharing ? 'teams-ctrl--active' : ''}`} onClick={handleScreenShare} title="Share screen"><IconScreenShare /><span>{sharing ? 'Stop share' : 'Share screen'}</span></button>
+          <button className={`teams-ctrl ${showWhiteboard ? 'teams-ctrl--active' : ''}`} onClick={toggleWhiteboard} title="Whiteboard"><IconWhiteboard /><span>{showWhiteboard ? 'Hide board' : 'Whiteboard'}</span></button>
+          <button className={`teams-ctrl ${handRaised ? 'teams-ctrl--active' : ''}`} onClick={handleToggleHand} title={handRaised ? 'Lower hand' : 'Raise hand'}><IconHandRaise /><span>{handRaised ? 'Lower hand' : 'Raise hand'}</span></button>
           {isTrainer
-            ? <button className="teams-ctrl teams-ctrl--end" onClick={handleEndClass} title="End class"><IconLeave /><span>End</span></button>
-            : <button className="teams-ctrl teams-ctrl--leave" onClick={handleLeave} title="Leave"><IconLeave /></button>
+            ? <button className="teams-ctrl teams-ctrl--end" onClick={handleEndClass} title="End meeting"><IconLeave /><span>End meeting</span></button>
+            : <button className="teams-ctrl teams-ctrl--leave" onClick={handleLeave} title="Leave"><IconLeave /><span>Leave meeting</span></button>
           }
         </div>
         <div className="teams-controls__right">
           <button className={`teams-ctrl teams-ctrl--side ${activeSidebar === 'people' ? 'teams-ctrl--active' : ''}`} onClick={() => toggleSidebar('people')} title="Participants">
-            <IconPeople />{raisedHandCount > 0 && <span className="teams-badge-count">{raisedHandCount}</span>}
+            <IconPeople /><span>Roster</span>{raisedHandCount > 0 && <span className="teams-badge-count">{raisedHandCount}</span>}
           </button>
           <button className={`teams-ctrl teams-ctrl--side ${activeSidebar === 'chat' ? 'teams-ctrl--active' : ''}`} onClick={() => toggleSidebar('chat')} title="Chat">
-            <IconChat />{messages.length > 0 && activeSidebar !== 'chat' && <span className="teams-notif-dot" />}
+            <IconChat /><span>Chat</span>{messages.length > 0 && activeSidebar !== 'chat' && <span className="teams-notif-dot" />}
           </button>
         </div>
       </div>
@@ -443,7 +1031,11 @@ export default function Classroom() {
 
 function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
   const videoRef = useRef(null);
-  useEffect(() => { if (videoRef.current && stream) videoRef.current.srcObject = stream; }, [stream]);
+
+  useEffect(() => {
+    if (videoRef.current && stream) videoRef.current.srcObject = stream;
+  }, [stream]);
+
   return (
     <div className="teams-tile" id={`remote-${pubId}`}>
       <video ref={videoRef} autoPlay playsInline />
@@ -456,7 +1048,11 @@ function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
 
 function PinnedVideo({ feed }) {
   const videoRef = useRef(null);
-  useEffect(() => { if (videoRef.current && feed.stream) videoRef.current.srcObject = feed.stream; }, [feed.stream]);
+
+  useEffect(() => {
+    if (videoRef.current && feed.stream) videoRef.current.srcObject = feed.stream;
+  }, [feed.stream]);
+
   return (
     <div className="teams-pinned-video">
       <video ref={videoRef} autoPlay playsInline muted={feed.type === 'local'} />

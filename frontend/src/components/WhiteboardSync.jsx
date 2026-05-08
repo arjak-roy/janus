@@ -8,7 +8,7 @@ function getCachedScene(roomId) {
   return sceneCache.get(String(roomId)) || {
     elements: [],
     files: {},
-    appState: { viewBackgroundColor: '#ffffff' }
+    appState: { viewBackgroundColor: '#ffffff', theme: 'light' }
   };
 }
 
@@ -18,7 +18,8 @@ function cloneFiles(files = {}) {
 
 function extractSharedAppState(appState) {
   return {
-    viewBackgroundColor: appState?.viewBackgroundColor || '#ffffff'
+    viewBackgroundColor: appState?.viewBackgroundColor || '#ffffff',
+    theme: 'light'
   };
 }
 
@@ -128,7 +129,8 @@ export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
       }
     }
 
-    const hasAppStateChange = lastScene.current.appState?.viewBackgroundColor !== nextAppState.viewBackgroundColor;
+    const hasAppStateChange = lastScene.current.appState?.viewBackgroundColor !== nextAppState.viewBackgroundColor
+      || lastScene.current.appState?.theme !== nextAppState.theme;
 
     if (changedElements.length === 0 && !hasAppStateChange) return;
 
@@ -294,6 +296,7 @@ export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
         excalidrawAPI={handleApiReady}
         initialData={initialScene}
         isCollaborating
+        theme="light"
         onChange={handleChange}
       />
     </div>

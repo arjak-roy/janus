@@ -98,6 +98,26 @@ function shouldRetryAudioOnly(err) {
   return err?.name === 'NotFoundError' || err?.name === 'OverconstrainedError';
 }
 
+function buildTrackCapture(enabled, deviceId) {
+  if (!enabled) return false;
+  if (!deviceId) return true;
+  return { deviceId: { exact: deviceId } };
+}
+
+function buildMediaConstraints(opts) {
+  return {
+    audio: buildTrackCapture(opts.audio, opts.audioDeviceId),
+    video: buildTrackCapture(opts.video, opts.videoDeviceId)
+  };
+}
+
+function buildPublisherTracks(opts) {
+  return [
+    { type: 'audio', capture: buildTrackCapture(opts.audio, opts.audioDeviceId) },
+    { type: 'video', capture: buildTrackCapture(opts.video, opts.videoDeviceId) }
+  ];
+}
+
 class JanusService {
   constructor() {
     this.janus = null;
@@ -121,6 +141,7 @@ class JanusService {
     this._feeds = {};       // publisherId -> { rfid, stream }
     this._initialized = false;
     this._textRoomReady = false;
+    this.initialPublishOptions = { audio: true, video: true };
 
     // WebSocket for signaling (hand-raise, whiteboard)
     this.signalWs = null;
@@ -214,12 +235,29 @@ class JanusService {
 
   // ── Publish own camera+mic feed ─────────────────────────
   async publishOwnFeed(opts = { audio: true, video: true }) {
+    if (!opts.audio && !opts.video) {
+      this.videoRoomHandle.createOffer({
+        tracks: [
+          { type: 'audio', capture: false },
+          { type: 'video', capture: false }
+        ],
+        success: (jsep) => {
+          this.videoRoomHandle.send({
+            message: { request: 'configure', audio: false, video: false },
+            jsep
+          });
+        },
+        error: (err) => {
+          console.error('[JanusService] Publish offer error:', err);
+          this.onError?.(err);
+        }
+      });
+      return;
+    }
+
     // First, verify we can actually access the camera/mic
     try {
-      const testStream = await navigator.mediaDevices.getUserMedia({
-        audio: opts.audio,
-        video: opts.video
-      });
+      const testStream = await navigator.mediaDevices.getUserMedia(buildMediaConstraints(opts));
       // Stop the test tracks immediately — Janus will request its own
       testStream.getTracks().forEach(t => t.stop());
       console.log('[JanusService] getUserMedia test passed');
@@ -231,16 +269,17 @@ class JanusService {
       // Only retry audio-only when the camera constraints/device are the issue.
       if (opts.video && shouldRetryAudioOnly(err)) {
         console.warn('[JanusService] Falling back to audio-only...');
-        return this.publishOwnFeed({ audio: opts.audio, video: false });
+        return this.publishOwnFeed({
+          ...opts,
+          video: false,
+          videoDeviceId: undefined
+        });
       }
       return;
     }
 
     this.videoRoomHandle.createOffer({
-      tracks: [
-        { type: 'audio', capture: opts.audio },
-        { type: 'video', capture: opts.video }
-      ],
+      tracks: buildPublisherTracks(opts),
       success: (jsep) => {
         this.videoRoomHandle.send({
           message: { request: 'configure', audio: opts.audio, video: opts.video },
@@ -448,7 +487,7 @@ class JanusService {
       this._currentRoom = msg.room;
 
       // Publish our own feed now
-      this.publishOwnFeed();
+      this.publishOwnFeed(this.initialPublishOptions);
 
       // Subscribe to existing publishers
       if (msg.publishers) {
@@ -707,6 +746,7 @@ class JanusService {
     this.videoRoomHandle = null;
     this.textRoomHandle = null;
     this._textRoomReady = false;
+    this.initialPublishOptions = { audio: true, video: true };
 
     // Let Janus.destroy() handle session teardown and all handle detaches
     // in one request — avoids "Couldn't find any session" race errors.
@@ -716,3 +756,4 @@ class JanusService {
 }
 
 export const janusService = new JanusService();
+export { resolveMediaAccessError };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Dashboard.css';
 
@@ -16,11 +16,24 @@ function resolveBackendUrl() {
 const BACKEND_URL = resolveBackendUrl();
 const API_SHARED_SECRET = (import.meta.env.VITE_API_SHARED_SECRET || '').trim();
 
+const HERO_NOTES = [
+  { title: 'Spotlight stage', body: 'Pin the active speaker or presentation feed without leaving the room.' },
+  { title: 'Host controls', body: 'Mute-all, remove participants, and manage raised hands in real time.' },
+  { title: 'Shared board', body: 'Switch from camera grid to collaborative whiteboard when the session calls for it.' },
+];
+
+const PRODUCT_PILLARS = [
+  { label: 'Built for', value: 'Workshops, interviews, and coaching' },
+  { label: 'Backed by', value: 'Janus media sessions with direct links' },
+  { label: 'Experience', value: 'Standalone GTS Meet workspace' },
+];
+
 export default function Dashboard() {
   const [roomId, setRoomId] = useState('');
   const [currentTime, setCurrentTime] = useState('');
   const [loading, setLoading] = useState(false);
   const [inputError, setInputError] = useState('');
+  const [actionError, setActionError] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -34,6 +47,7 @@ export default function Dashboard() {
     e.preventDefault();
     const trimmed = roomId.trim();
     if (!trimmed) return;
+    setActionError('');
     if (!/^\d+$/.test(trimmed)) {
       setInputError('Room ID must be a number');
       return;
@@ -45,6 +59,8 @@ export default function Dashboard() {
   const handleCreateRoom = async () => {
     try {
       setLoading(true);
+      setActionError('');
+      setInputError('');
       const headers = { 'Content-Type': 'application/json' };
       if (API_SHARED_SECRET) {
         headers['x-api-secret'] = API_SHARED_SECRET;
@@ -52,19 +68,21 @@ export default function Dashboard() {
       const res = await fetch(`${BACKEND_URL}/api/rooms`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({}) // Let backend generate a room
+        body: JSON.stringify({})
       });
       if (!res.ok) {
-        const data = await res.json();
-        console.error('Failed to create room:', res.status, data);
-        return;
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Unable to create a meeting right now.');
       }
       const data = await res.json();
       if (data.success) {
         navigate(`/room/${data.room.janusId}`);
+        return;
       }
+      throw new Error('Meeting creation did not return a valid join link.');
     } catch (err) {
       console.error('Failed to create room:', err);
+      setActionError(err instanceof Error ? err.message : 'Unable to create a meeting right now.');
     } finally {
       setLoading(false);
     }
@@ -72,60 +90,122 @@ export default function Dashboard() {
 
   return (
     <div className="meet-dashboard">
+      <div className="meet-dashboard__ambient meet-dashboard__ambient--left" />
+      <div className="meet-dashboard__ambient meet-dashboard__ambient--right" />
+
       <header className="meet-header">
         <div className="meet-logo">
-          <span className="meet-logo-brand">GTS</span>
-          <span className="meet-logo-text">Meet</span>
+          <span className="meet-logo-mark" />
+          <div className="meet-logo-copy">
+            <span className="meet-logo-brand">GTS Meet</span>
+            <span className="meet-logo-text">Standalone meeting studio</span>
+          </div>
         </div>
         <div className="meet-header-right">
+          <span className="meet-header-chip">Standalone workspace</span>
           <span className="meet-time">{currentTime}</span>
         </div>
       </header>
 
       <main className="meet-main-content">
         <div className="meet-hero-text">
-          <h1>Premium video meetings.<br/>Now available for your team.</h1>
-          <p>Secure, high-quality video conferencing built for teams. Start or join a meeting instantly with GTS Meet.</p>
-          
-          <div className="meet-action-area">
-            <button className="meet-new-btn" onClick={handleCreateRoom} disabled={loading}>
-              {loading ? (
-                <><span className="meet-spinner"></span> Creating...</>
-              ) : (
-                <><span className="meet-new-btn-icon">＋</span> New meeting</>
-              )}
-            </button>
-            
-            <form className="meet-join-form" onSubmit={handleJoinById}>
-              <div className="meet-input-wrapper">
-                <span className="meet-input-icon">⌨️</span>
-                <input
-                  type="text"
-                  value={roomId}
-                  onChange={(e) => setRoomId(e.target.value)}
-                  placeholder="Enter a code or link"
-                  className="meet-join-input"
-                />
+          <span className="meet-eyebrow">Standalone collaboration product</span>
+          <h1>Run live sessions inside a dedicated GTS Meet meeting environment.</h1>
+          <p>
+            Launch meetings for workshops, interviews, and coaching with spotlight controls,
+            whiteboard, chat, hand raise, and screen share in one focused product shell.
+          </p>
+
+          <div className="meet-pillars">
+            {PRODUCT_PILLARS.map((pillar) => (
+              <div className="meet-pillar" key={pillar.label}>
+                <span>{pillar.label}</span>
+                <strong>{pillar.value}</strong>
               </div>
-              <button type="submit" className="meet-join-btn" disabled={!roomId.trim()}>Join</button>
-            </form>
-            {inputError && <p style={{ color: '#ea4335', fontSize: '0.85rem', marginTop: '0.5rem' }}>{inputError}</p>}
+            ))}
           </div>
-          
-          <div className="meet-divider"></div>
-          <p className="meet-learn-more"><a href="#">Learn more</a> about GTS Meet</p>
+
+          <section className="meet-action-surface">
+            <div className="meet-action-surface__head">
+              <div>
+                <h2>Start or join a meeting</h2>
+                <p>Meeting IDs are numeric and open directly into the standalone GTS Meet stage.</p>
+              </div>
+              <span className={`meet-status-chip ${loading ? 'meet-status-chip--busy' : ''}`}>
+                {loading ? 'Provisioning meeting' : 'Ready'}
+              </span>
+            </div>
+
+            <div className="meet-action-area">
+              <button className="meet-new-btn" onClick={handleCreateRoom} disabled={loading}>
+                {loading ? (
+                  <><span className="meet-spinner"></span> Creating meeting</>
+                ) : (
+                  <><span className="meet-new-btn-icon">+</span> New meeting</>
+                )}
+              </button>
+
+              <form className="meet-join-form" onSubmit={handleJoinById}>
+                <label className="meet-input-wrapper">
+                  <span className="meet-input-label">Meeting ID</span>
+                  <input
+                    type="text"
+                    value={roomId}
+                    onChange={(e) => setRoomId(e.target.value)}
+                    placeholder="Enter numeric meeting code"
+                    className="meet-join-input"
+                  />
+                </label>
+                <button type="submit" className="meet-join-btn" disabled={!roomId.trim()}>
+                  Join meeting
+                </button>
+              </form>
+            </div>
+
+            {inputError ? <p className="meet-inline-status meet-inline-status--error">{inputError}</p> : null}
+            {actionError ? <p className="meet-inline-status meet-inline-status--error">{actionError}</p> : null}
+          </section>
         </div>
 
         <div className="meet-hero-image">
-          {/* Placeholder for the carousel or illustration typical of Google Meet */}
-          <div className="meet-illustration">
-            <div className="meet-illustration-circles">
-              <div className="circle circle-1"></div>
-              <div className="circle circle-2"></div>
-              <div className="circle circle-3"></div>
+          <div className="meet-stage-card">
+            <div className="meet-stage-card__halo"></div>
+            <div className="meet-stage-window">
+              <div className="meet-stage-window__header">
+                <div>
+                  <span className="meet-stage-window__eyebrow">GTS Meet stage</span>
+                  <strong className="meet-stage-window__title">Session control deck</strong>
+                </div>
+                <span className="meet-stage-window__room">meeting / {roomId.trim() || 'auto-generated'}</span>
+              </div>
+
+              <div className="meet-stage-canvas">
+                <div className="meet-stage-primary">
+                  <span className="meet-stage-primary__badge">Live workspace</span>
+                  <div className="meet-stage-avatar">GM</div>
+                  <h3>Designed as its own product, not an embedded portal page.</h3>
+                  <p>
+                    The standalone surface stays focused on media, moderation, and collaboration without academy chrome around it.
+                  </p>
+                </div>
+
+                <div className="meet-stage-filmstrip">
+                  {HERO_NOTES.map((note) => (
+                    <article className="meet-film-tile" key={note.title}>
+                      <span className="meet-film-tile__index">0{HERO_NOTES.indexOf(note) + 1}</span>
+                      <strong>{note.title}</strong>
+                      <p>{note.body}</p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+
+              <div className="meet-stage-footer">
+                <span>Meeting launch</span>
+                <span>Spotlight and hand raise</span>
+                <span>Screen share and whiteboard</span>
+              </div>
             </div>
-            <p>Get a link you can share</p>
-            <span>Click <strong>New meeting</strong> to get a link you can send to people you want to meet with</span>
           </div>
         </div>
       </main>
