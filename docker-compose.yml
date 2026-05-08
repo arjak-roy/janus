@@ -16,25 +16,6 @@ services:
       - ./conf/janus.plugin.textroom.jcfg:/usr/local/etc/janus/janus.plugin.textroom.jcfg
     command: ["/usr/local/bin/janus", "-F", "/usr/local/etc/janus"]
 
-  # db:
-  #   image: postgres:15-alpine
-  #   container_name: janus-db
-  #   restart: unless-stopped
-  #   environment:
-  #     POSTGRES_USER: ${POSTGRES_USER}
-  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-  #     POSTGRES_DB: ${POSTGRES_DB}
-  #   ports:
-  #     - "5432:5432"
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-  #     interval: 5s
-  #     timeout: 5s
-  #     retries: 10
-  #   networks:
-  #     - janus-net
 
   backend:
     build:
