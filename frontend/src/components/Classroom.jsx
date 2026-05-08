@@ -25,6 +25,9 @@ const IconWarning = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill=
 const IconMuteAll = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.48-.35 2.17"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>);
 const IconKick = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>);
 const IconSpotlight = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>);
+const IconSettings = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>);
+const IconMore = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>);
+const IconBack = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>);
 
 function resolveBackendUrl() {
   const configured = (import.meta.env.VITE_BACKEND_URL || '').trim();
@@ -130,6 +133,7 @@ export default function Classroom() {
   const [remoteFeeds, setRemoteFeeds] = useState({});
   const [screenShareFeeds, setScreenShareFeeds] = useState({});
   const localVideoRef = useRef(null);
+  const localStreamRef = useRef(null);
 
   const [handRaised, setHandRaised] = useState(false);
   const [raisedHands, setRaisedHands] = useState({});
@@ -140,6 +144,10 @@ export default function Classroom() {
   const [duration, setDuration] = useState(0);
   const startTimeRef = useRef(Date.now());
   const noticeTimerRef = useRef(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const [uiHidden, setUiHidden] = useState(false);
+  const uiTimerRef = useRef(null);
 
   const showNotice = useCallback((type, text, timeout = 3200) => {
     if (noticeTimerRef.current) {
@@ -201,6 +209,24 @@ export default function Classroom() {
     };
   }, []);
 
+  // Auto-hide header & controls after 3s of no mouse movement
+  useEffect(() => {
+    if (!connected) return;
+    const resetTimer = () => {
+      setUiHidden(false);
+      if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
+      uiTimerRef.current = setTimeout(() => setUiHidden(true), 3000);
+    };
+    resetTimer();
+    window.addEventListener('mousemove', resetTimer);
+    window.addEventListener('touchstart', resetTimer);
+    return () => {
+      if (uiTimerRef.current) clearTimeout(uiTimerRef.current);
+      window.removeEventListener('mousemove', resetTimer);
+      window.removeEventListener('touchstart', resetTimer);
+    };
+  }, [connected]);
+
   useEffect(() => {
     const update = () => {
       setCurrentTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
@@ -216,6 +242,13 @@ export default function Classroom() {
       previewVideoRef.current.srcObject = previewStream;
     }
   }, [previewStream]);
+
+  // Attach local stream to video element once in-room view mounts
+  useEffect(() => {
+    if (connected && localVideoRef.current && localStreamRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+    }
+  }, [connected]);
 
   const formatDuration = (seconds) => {
     const hours = Math.floor(seconds / 3600);
@@ -461,6 +494,7 @@ export default function Classroom() {
       };
 
       janusService.onLocalStream = (stream) => {
+        localStreamRef.current = stream;
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
@@ -748,138 +782,73 @@ export default function Classroom() {
           </div>
         )}
 
+        <button className="gm-back-link" onClick={() => navigate('/')}>
+          <IconBack /> Back
+        </button>
+
         <div className="teams-prejoin-shell">
-          <div className="teams-prejoin-topbar">
-            <div className="teams-brand">
-              <span className="teams-brand__mark" />
-              <div className="teams-brand__copy">
-                <span className="teams-brand__name">GTS Meet</span>
-                <span className="teams-brand__sub">Standalone meeting / {roomId}</span>
-              </div>
-            </div>
+          <div className="gm-prejoin-card">
+            <div className="gm-preview">
+              {previewStream && camOn ? (
+                <video ref={previewVideoRef} autoPlay playsInline muted />
+              ) : (
+                <div className="gm-preview-empty">
+                  <div className="gm-avatar">{buildInitials(displayName.current)}</div>
+                </div>
+              )}
 
-            <div className="teams-prejoin-topbar__meta">
-              <span className="teams-header__chip">{setupStatus}</span>
-              <span className="teams-header__chip">{currentTime}</span>
-            </div>
-          </div>
+              {(previewLoading || joining) && (
+                <div className="gm-preview-loading">
+                  <div className="spinner" />
+                </div>
+              )}
 
-          <div className="teams-prejoin">
-            <section className="teams-prejoin__content">
-              <span className="teams-prejoin__eyebrow">Pre-join check</span>
-              <h1>Check your devices, then join the standalone GTS Meet session.</h1>
-              <p>
-                Local media check, session readiness, and mobile controls stay inside the standalone product before you enter.
-              </p>
-
-              <div className="teams-prejoin__status-grid">
-                <article className="teams-prejoin__status-card">
-                  <span>Session</span>
-                  <strong>{roomChecked ? 'Verified and ready' : joining ? 'Checking availability' : 'Waiting for setup'}</strong>
-                </article>
-                <article className="teams-prejoin__status-card">
-                  <span>Media</span>
-                  <strong>{previewLoading ? 'Checking devices' : previewError ? 'Needs attention' : 'Ready for entry'}</strong>
-                </article>
-                <article className="teams-prejoin__status-card">
-                  <span>Role</span>
-                  <strong>{isTrainer ? 'Host moderation tools' : 'Participant controls'}</strong>
-                </article>
-              </div>
-
-              <div className={`teams-prejoin__notice ${error ? 'teams-prejoin__notice--error' : previewError ? 'teams-prejoin__notice--warn' : ''}`}>
-                <strong>{error ? 'Session setup issue' : 'Media readiness'}</strong>
-                <p>{error || prejoinMediaStatus}</p>
-              </div>
-
-              <div className="teams-prejoin__actions">
-                <button className="teams-prejoin__primary" type="button" onClick={handleEnterRoom} disabled={!canEnterRoom}>
-                  {joining ? <><span className="spinner" /> Connecting...</> : 'Join GTS Meet'}
-                </button>
-                <button className="teams-prejoin__secondary" type="button" onClick={handleRetrySetup}>
-                  Retry setup
-                </button>
-                <button className="teams-prejoin__ghost" type="button" onClick={() => navigate('/')}>
-                  Back to landing
-                </button>
-              </div>
-            </section>
-
-            <aside className="teams-prejoin__preview-panel">
-              <div className="teams-prejoin__preview-frame">
-                {previewStream && camOn ? (
-                  <video ref={previewVideoRef} autoPlay playsInline muted className="teams-prejoin__preview-video" />
-                ) : (
-                  <div className="teams-prejoin__preview-empty">
-                    <div className="teams-prejoin__avatar">{buildInitials(displayName.current)}</div>
-                    <h3>{previewLoading ? 'Opening your preview' : 'Preview staged'}</h3>
-                    <p>
-                      {camOn
-                        ? 'Your camera preview will appear here once device access is ready.'
-                        : 'Camera is off for entry. You can still join with audio or no devices.'}
-                    </p>
-                  </div>
-                )}
-
-                {(previewLoading || joining) && (
-                  <div className="teams-prejoin__preview-overlay">
-                    <div className="spinner" />
-                    <p>{joining ? setupStatus : 'Checking your devices'}</p>
-                  </div>
-                )}
-              </div>
-
-              <div className="teams-prejoin__toggle-row">
-                <button className={`teams-prejoin__toggle ${micOn ? 'teams-prejoin__toggle--active' : ''}`} type="button" onClick={handleToggleMic}>
+              <div className="gm-preview-controls">
+                <button className={`gm-toggle-btn ${!micOn ? 'gm-toggle-btn--off' : ''}`} onClick={handleToggleMic} title={micOn ? 'Turn off microphone' : 'Turn on microphone'}>
                   {micOn ? <IconMic /> : <IconMicOff />}
-                  <span>{micOn ? 'Mic ready' : 'Mic muted'}</span>
                 </button>
-                <button className={`teams-prejoin__toggle ${camOn ? 'teams-prejoin__toggle--active' : ''}`} type="button" onClick={handleToggleCam}>
+                <button className={`gm-toggle-btn ${!camOn ? 'gm-toggle-btn--off' : ''}`} onClick={handleToggleCam} title={camOn ? 'Turn off camera' : 'Turn on camera'}>
                   {camOn ? <IconCam /> : <IconCamOff />}
-                  <span>{camOn ? 'Camera ready' : 'Camera off'}</span>
+                </button>
+                <button className="gm-settings-btn" onClick={() => setShowSettings((v) => !v)} title="Settings">
+                  <IconSettings />
                 </button>
               </div>
+            </div>
 
-              <div className="teams-prejoin__device-grid">
-                <label className="teams-prejoin__device-field">
-                  <span className="teams-prejoin__device-label">Microphone source</span>
-                  <select
-                    className="teams-prejoin__device-select"
-                    value={selectedAudioDeviceId}
-                    onChange={(event) => setSelectedAudioDeviceId(event.target.value)}
-                    disabled={!deviceSelectorSupported}
-                  >
-                    <option value="">Browser default microphone</option>
-                    {audioDevices.map((device) => (
-                      <option key={device.deviceId} value={device.deviceId}>{device.label}</option>
-                    ))}
+            {showSettings && (
+              <div className="gm-settings-panel">
+                <h3>Device settings</h3>
+                <div className="gm-device-row">
+                  <span className="gm-device-label">Microphone</span>
+                  <select className="gm-device-select" value={selectedAudioDeviceId} onChange={(e) => setSelectedAudioDeviceId(e.target.value)} disabled={!deviceSelectorSupported}>
+                    <option value="">Default</option>
+                    {audioDevices.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label}</option>)}
                   </select>
-                  <span className="teams-prejoin__device-hint">{audioDeviceHint}</span>
-                </label>
-
-                <label className="teams-prejoin__device-field">
-                  <span className="teams-prejoin__device-label">Camera source</span>
-                  <select
-                    className="teams-prejoin__device-select"
-                    value={selectedVideoDeviceId}
-                    onChange={(event) => setSelectedVideoDeviceId(event.target.value)}
-                    disabled={!deviceSelectorSupported}
-                  >
-                    <option value="">Browser default camera</option>
-                    {videoDevices.map((device) => (
-                      <option key={device.deviceId} value={device.deviceId}>{device.label}</option>
-                    ))}
+                </div>
+                <div className="gm-device-row">
+                  <span className="gm-device-label">Camera</span>
+                  <select className="gm-device-select" value={selectedVideoDeviceId} onChange={(e) => setSelectedVideoDeviceId(e.target.value)} disabled={!deviceSelectorSupported}>
+                    <option value="">Default</option>
+                    {videoDevices.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label}</option>)}
                   </select>
-                  <span className="teams-prejoin__device-hint">{videoDeviceHint}</span>
-                </label>
+                </div>
               </div>
+            )}
 
-              <div className="teams-prejoin__feature-list">
-                <span>Host spotlight tools</span>
-                <span>Live chat and roster</span>
-                <span>Screen share and board</span>
-              </div>
-            </aside>
+            {previewError && <p className="gm-preview-error">{previewError}</p>}
+            {error && <p className="gm-preview-error">{error}</p>}
+
+            <div className="gm-prejoin-info">
+              <span className="gm-display-name">{displayName.current}</span>
+              <span className="gm-room-label">Meeting {roomId}</span>
+            </div>
+
+            <div className="gm-join-actions">
+              <button className="gm-join-btn" onClick={handleEnterRoom} disabled={!canEnterRoom}>
+                {joining ? 'Joining...' : 'Join now'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -887,7 +856,7 @@ export default function Classroom() {
   }
 
   return (
-    <div className="teams-classroom">
+    <div className={`teams-classroom ${uiHidden ? 'gm-ui-hidden' : ''}`}>
       {uiNotice && (
         <div className={`teams-toast teams-toast--${uiNotice.type}`}>
           {uiNotice.text}
@@ -897,20 +866,10 @@ export default function Classroom() {
 
       <div className="teams-header">
         <div className="teams-header__left">
-          <div className="teams-brand">
-            <span className="teams-brand__mark" />
-            <div className="teams-brand__copy">
-              <span className="teams-brand__name">GTS Meet</span>
-              <span className="teams-brand__sub">{isTrainer ? 'Host studio' : 'Standalone meeting'} / Session {roomId}</span>
-            </div>
-          </div>
-          <div className="teams-live-indicator"><span className="teams-live-dot" /><span>ON AIR</span></div>
-          <span className="teams-header__title">{roomModeLabel}</span>
+          <span className="teams-header__title">Meeting {roomId}</span>
           <span className="teams-header__duration">{formatDuration(duration)}</span>
         </div>
         <div className="teams-header__right">
-          <span className="teams-header__chip">{sessionStateLabel}</span>
-          <span className="teams-header__chip">{isTrainer ? 'Host controls' : 'Participant view'}</span>
           <span className="teams-header__count"><IconPeople /> {totalFeeds}</span>
           <span className="teams-header__time">{currentTime}</span>
         </div>
@@ -997,32 +956,37 @@ export default function Classroom() {
       </div>
 
       <div className="teams-controls">
-        <div className="teams-controls__left">
-          {isTrainer && (
-            <>
-              <button className="teams-ctrl teams-ctrl--warn" onClick={handleMuteAll} title="Mute all"><IconMuteAll /><span>Mute all</span></button>
-              {spotlightUserId && <button className="teams-ctrl" onClick={handleClearSpotlight} title="Clear spotlight"><IconSpotlight /><span>Clear stage</span></button>}
-            </>
-          )}
-        </div>
         <div className="teams-controls__center">
-          <button className={`teams-ctrl ${!micOn ? 'teams-ctrl--off' : ''}`} onClick={handleToggleMic} title={micOn ? 'Mute' : 'Unmute'}>{micOn ? <IconMic /> : <IconMicOff />}<span>{micOn ? 'Mic on' : 'Mic off'}</span></button>
-          <button className={`teams-ctrl ${!camOn ? 'teams-ctrl--off' : ''}`} onClick={handleToggleCam} title={camOn ? 'Camera off' : 'Camera on'}>{camOn ? <IconCam /> : <IconCamOff />}<span>{camOn ? 'Camera on' : 'Camera off'}</span></button>
-          <button className={`teams-ctrl ${sharing ? 'teams-ctrl--active' : ''}`} onClick={handleScreenShare} title="Share screen"><IconScreenShare /><span>{sharing ? 'Stop share' : 'Share screen'}</span></button>
-          <button className={`teams-ctrl ${showWhiteboard ? 'teams-ctrl--active' : ''}`} onClick={toggleWhiteboard} title="Whiteboard"><IconWhiteboard /><span>{showWhiteboard ? 'Hide board' : 'Whiteboard'}</span></button>
-          <button className={`teams-ctrl ${handRaised ? 'teams-ctrl--active' : ''}`} onClick={handleToggleHand} title={handRaised ? 'Lower hand' : 'Raise hand'}><IconHandRaise /><span>{handRaised ? 'Lower hand' : 'Raise hand'}</span></button>
-          {isTrainer
-            ? <button className="teams-ctrl teams-ctrl--end" onClick={handleEndClass} title="End meeting"><IconLeave /><span>End meeting</span></button>
-            : <button className="teams-ctrl teams-ctrl--leave" onClick={handleLeave} title="Leave"><IconLeave /><span>Leave meeting</span></button>
-          }
-        </div>
-        <div className="teams-controls__right">
+          <button className={`teams-ctrl ${!micOn ? 'teams-ctrl--off' : ''}`} onClick={handleToggleMic} title={micOn ? 'Turn off microphone' : 'Turn on microphone'}>{micOn ? <IconMic /> : <IconMicOff />}</button>
+          <button className={`teams-ctrl ${!camOn ? 'teams-ctrl--off' : ''}`} onClick={handleToggleCam} title={camOn ? 'Turn off camera' : 'Turn on camera'}>{camOn ? <IconCam /> : <IconCamOff />}</button>
+          <button className={`teams-ctrl ${sharing ? 'teams-ctrl--active' : ''}`} onClick={handleScreenShare} title="Share screen"><IconScreenShare /></button>
+          <button className={`teams-ctrl ${handRaised ? 'teams-ctrl--active' : ''}`} onClick={handleToggleHand} title={handRaised ? 'Lower hand' : 'Raise hand'}><IconHandRaise /></button>
+          <div style={{ position: 'relative' }}>
+            <button className="teams-ctrl" onClick={() => setShowMore((v) => !v)} title="More options"><IconMore /></button>
+            {showMore && (
+              <div className="gm-more-menu" onClick={() => setShowMore(false)}>
+                <button className={`gm-more-item ${showWhiteboard ? 'gm-more-item--active' : ''}`} onClick={toggleWhiteboard}>
+                  <IconWhiteboard /> {showWhiteboard ? 'Close whiteboard' : 'Open whiteboard'}
+                </button>
+                {isTrainer && (
+                  <>
+                    <button className="gm-more-item" onClick={handleMuteAll}><IconMuteAll /> Mute everyone</button>
+                    {spotlightUserId && <button className="gm-more-item" onClick={handleClearSpotlight}><IconSpotlight /> Clear spotlight</button>}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
           <button className={`teams-ctrl teams-ctrl--side ${activeSidebar === 'people' ? 'teams-ctrl--active' : ''}`} onClick={() => toggleSidebar('people')} title="Participants">
-            <IconPeople /><span>Roster</span>{raisedHandCount > 0 && <span className="teams-badge-count">{raisedHandCount}</span>}
+            <IconPeople />{raisedHandCount > 0 && <span className="teams-badge-count">{raisedHandCount}</span>}
           </button>
           <button className={`teams-ctrl teams-ctrl--side ${activeSidebar === 'chat' ? 'teams-ctrl--active' : ''}`} onClick={() => toggleSidebar('chat')} title="Chat">
-            <IconChat /><span>Chat</span>{messages.length > 0 && activeSidebar !== 'chat' && <span className="teams-notif-dot" />}
+            <IconChat />{messages.length > 0 && activeSidebar !== 'chat' && <span className="teams-notif-dot" />}
           </button>
+          {isTrainer
+            ? <button className="teams-ctrl teams-ctrl--end" onClick={handleEndClass} title="End meeting"><IconLeave /><span>End</span></button>
+            : <button className="teams-ctrl teams-ctrl--leave" onClick={handleLeave} title="Leave"><IconLeave /><span>Leave</span></button>
+          }
         </div>
       </div>
     </div>
