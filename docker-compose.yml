@@ -71,6 +71,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_API_SHARED_SECRET=${API_SHARED_SECRET:-}
     container_name: janus-frontend
     restart: unless-stopped
     ports:

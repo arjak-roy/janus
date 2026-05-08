@@ -14,6 +14,7 @@ function resolveBackendUrl() {
 }
 
 const BACKEND_URL = resolveBackendUrl();
+const API_SHARED_SECRET = (import.meta.env.VITE_API_SHARED_SECRET || '').trim();
 
 export default function Dashboard() {
   const [roomId, setRoomId] = useState('');
@@ -44,11 +45,20 @@ export default function Dashboard() {
   const handleCreateRoom = async () => {
     try {
       setLoading(true);
+      const headers = { 'Content-Type': 'application/json' };
+      if (API_SHARED_SECRET) {
+        headers['x-api-secret'] = API_SHARED_SECRET;
+      }
       const res = await fetch(`${BACKEND_URL}/api/rooms`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({}) // Let backend generate a room
       });
+      if (!res.ok) {
+        const data = await res.json();
+        console.error('Failed to create room:', res.status, data);
+        return;
+      }
       const data = await res.json();
       if (data.success) {
         navigate(`/room/${data.room.janusId}`);
