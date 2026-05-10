@@ -16,25 +16,6 @@ services:
       - ./conf/janus.plugin.textroom.jcfg:/usr/local/etc/janus/janus.plugin.textroom.jcfg
     command: ["/usr/local/bin/janus", "-F", "/usr/local/etc/janus"]
 
-  db:
-    image: postgres:15-alpine
-    container_name: janus-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - janus-net
 
   backend:
     build:
@@ -58,8 +39,8 @@ services:
     depends_on:
       janus-gateway:
         condition: service_started
-      db:
-        condition: service_healthy
+      # db:
+      #   condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -71,6 +52,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_API_SHARED_SECRET=${API_SHARED_SECRET:-}
     container_name: janus-frontend
     restart: unless-stopped
     ports:
