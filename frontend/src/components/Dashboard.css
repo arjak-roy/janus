@@ -73,6 +73,49 @@
   max-width: 400px;
 }
 
+/* ── Participant profile ── */
+.meet-profile-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+
+.meet-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.meet-field span {
+  font-size: 0.75rem;
+  color: var(--gm-text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.meet-field input,
+.meet-field select {
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--gm-surface-hover);
+  border-radius: var(--gm-radius-sm);
+  background: transparent;
+  color: var(--gm-text);
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.meet-field input:focus,
+.meet-field select:focus {
+  border-color: var(--gm-blue);
+}
+
+.meet-field--compact {
+  max-width: 140px;
+}
+
 /* ── Action row ── */
 .meet-action-row {
   display: flex;
@@ -192,6 +235,14 @@
 
 /* ── Responsive ── */
 @media (max-width: 560px) {
+  .meet-profile-row {
+    grid-template-columns: 1fr;
+  }
+
+  .meet-field--compact {
+    max-width: none;
+  }
+
   .meet-action-row {
     flex-direction: column;
     gap: 12px;

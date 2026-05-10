@@ -26,14 +26,17 @@ It is separate from:
 ## Primary Endpoint
 
 Server endpoint:
-- `ws(s)://<host>/api/rooms/:roomId/ws`
+- `ws(s)://<host>/api/rooms/:roomId/ws?token=<participant-jwt>`
 
 Frontend uses same-origin URL computed from current page protocol/host/port.
 
 Backend behavior:
 - resolve `:roomId` by UUID or numeric `janusId`
+- verify participant JWT from `token` query parameter
+- if token missing/invalid: close socket code `1008`
 - if room not found: close socket code `1008`
-- if valid: add socket to room subscriber set
+- if token room does not match target room: close socket code `1008`
+- if valid: add socket to room subscriber map and send a `signaling-ready` handshake event
 
 ## Message Contract
 
@@ -53,6 +56,22 @@ If either field is missing, backend logs warning and drops message.
   "display": "User-1234"
 }
 ```
+
+### Signaling Ready Handshake
+
+Backend sends this event after token + room validation succeeds:
+
+```json
+{
+  "__signal": true,
+  "type": "signaling-ready",
+  "roomId": "room-uuid",
+  "userId": "participant-id",
+  "role": "candidate"
+}
+```
+
+Frontend treats signaling as ready only after this handshake arrives.
 
 ### Whiteboard Delta Event
 
@@ -102,7 +121,7 @@ Rules:
 - empty subscriber set is cleaned up from map
 
 Internal model:
-- `Map<roomUUID, Set<WebSocket>>`
+- `Map<roomUUID, Map<WebSocket, ParticipantMeta>>`
 
 ## Client Fallback Strategy
 
@@ -111,7 +130,7 @@ Implemented in `JanusService.sendSignal(roomId, payload)`.
 Order of operations:
 1. Try backend signaling WebSocket.
 2. If unavailable, fallback to TextRoom (if ready).
-3. If both unavailable, log warning and drop signal.
+3. If both unavailable, return a failed send result so UI can show a clear notice.
 
 This keeps collaboration functional in degraded mode when TextRoom is operational.
 

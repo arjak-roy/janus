@@ -375,6 +375,33 @@ class JanusService {
 
     this._currentRoomId = roomId;
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let handshakeAcked = false;
+      let handshakeTimeout = null;
+
+      const clearHandshakeTimeout = () => {
+        if (handshakeTimeout) {
+          window.clearTimeout(handshakeTimeout);
+          handshakeTimeout = null;
+        }
+      };
+
+      const resolveOnce = () => {
+        if (settled) return;
+        settled = true;
+        clearHandshakeTimeout();
+        this._signalWsReady = true;
+        resolve();
+      };
+
+      const rejectOnce = (error) => {
+        if (settled) return;
+        settled = true;
+        clearHandshakeTimeout();
+        this._signalWsReady = false;
+        reject(error instanceof Error ? error : new Error(String(error)));
+      };
+
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
@@ -383,14 +410,24 @@ class JanusService {
         this.signalWs = new WebSocket(wsUrl);
 
         this.signalWs.onopen = () => {
-          this._signalWsReady = true;
-          console.log('[JanusService] Signaling WebSocket connected');
-          resolve();
+          console.log('[JanusService] Signaling WebSocket connected, waiting for ready handshake');
+          handshakeTimeout = window.setTimeout(() => {
+            rejectOnce(new Error('Session signaling handshake timed out. Please rejoin the meeting.'));
+            if (this.signalWs?.readyState === WebSocket.OPEN) {
+              this.signalWs.close(1000, 'Handshake timeout');
+            }
+          }, 5000);
         };
 
         this.signalWs.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
+            if (message.__signal && message.type === 'signaling-ready') {
+              handshakeAcked = true;
+              console.log('[JanusService] Signaling handshake acknowledged');
+              resolveOnce();
+              return;
+            }
             if (message.__signal && message.type) {
               this.onSignal?.(message);
             }
@@ -401,16 +438,27 @@ class JanusService {
 
         this.signalWs.onerror = (err) => {
           console.error('[JanusService] WebSocket error:', err);
-          this.onError?.(`Signaling error: ${err.message || 'Unknown'}`);
-          reject(err);
+          this.onError?.('Signaling connection error.');
+          if (!handshakeAcked) {
+            rejectOnce(new Error('Signaling connection failed before authentication completed.'));
+          }
         };
 
-        this.signalWs.onclose = () => {
+        this.signalWs.onclose = (event) => {
           this._signalWsReady = false;
-          console.log('[JanusService] Signaling WebSocket closed');
+          const reason = event.reason ? ` (${event.reason})` : '';
+          console.log(`[JanusService] Signaling WebSocket closed: ${event.code}${reason}`);
+
+          if (!handshakeAcked) {
+            if (event.code === 1008) {
+              rejectOnce(new Error('Signaling authorization failed. Rejoin using a valid meeting link.'));
+              return;
+            }
+            rejectOnce(new Error('Signaling connection closed before the session became ready.'));
+          }
         };
       } catch (err) {
-        reject(err);
+        rejectOnce(err);
       }
     });
   }
@@ -689,23 +737,30 @@ class JanusService {
     // Try WebSocket first (preferred method)
     if (this._signalWsReady && this.signalWs) {
       if (this.sendSignalViaWebSocket(payload)) {
-        return;
+        return { sent: true, transport: 'websocket' };
       }
     }
 
     // Fallback to TextRoom if available
     if (!this.textRoomHandle || !this._textRoomReady) {
       console.warn('[JanusService] Neither WebSocket nor TextRoom ready for signal:', payload.type);
-      return;
+      return { sent: false, transport: 'none' };
     }
-    this.textRoomHandle.data({
-      text: JSON.stringify({
-        textroom: 'message',
-        room: Number(roomId),
-        text: JSON.stringify({ __signal: true, ...payload }),
-        transaction: Janus.randomString(12)
-      })
-    });
+
+    try {
+      this.textRoomHandle.data({
+        text: JSON.stringify({
+          textroom: 'message',
+          room: Number(roomId),
+          text: JSON.stringify({ __signal: true, ...payload }),
+          transaction: Janus.randomString(12)
+        })
+      });
+      return { sent: true, transport: 'textroom' };
+    } catch (err) {
+      console.error('[JanusService] Error sending signal via TextRoom:', err);
+      return { sent: false, transport: 'none' };
+    }
   }
 
   // ── Media toggles ──────────────────────────────────────

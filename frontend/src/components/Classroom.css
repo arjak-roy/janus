@@ -895,18 +895,24 @@
 }
 
 /* ── More menu ── */
+.gm-more-anchor {
+  position: relative;
+}
+
 .gm-more-menu {
   position: absolute;
-  bottom: 56px;
+  bottom: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   min-width: 200px;
+  max-width: min(280px, calc(100vw - 24px));
   padding: 8px 0;
   border-radius: 8px;
   background: #303134;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  overflow: hidden;
   z-index: 50;
 }
 
@@ -914,7 +920,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
+  min-height: 44px;
+  padding: 12px 16px;
   border: none;
   background: none;
   color: #e8eaed;
@@ -992,6 +999,10 @@
     height: 48px;
   }
 
+  .teams-controls__center {
+    gap: 6px;
+  }
+
   .teams-ctrl--leave span,
   .teams-ctrl--end span { display: none; }
   .teams-ctrl--leave,
@@ -1003,5 +1014,13 @@
 
   .gm-prejoin-card {
     gap: 16px;
+  }
+
+  .gm-more-menu {
+    left: auto;
+    right: 0;
+    transform: none;
+    min-width: 180px;
+    max-width: calc(100vw - 16px);
   }
 }

@@ -44,10 +44,26 @@ function parseTokenPayload(token) {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
-    return JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = payload.padEnd(payload.length + ((4 - (payload.length % 4)) % 4), '=');
+    return JSON.parse(atob(padded));
   } catch {
     return null;
   }
+}
+
+function isValidParticipantToken(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  if (typeof payload.userId !== 'string' || !payload.userId.trim()) return false;
+  if (typeof payload.displayName !== 'string' || !payload.displayName.trim()) return false;
+  if (payload.role !== 'trainer' && payload.role !== 'candidate') return false;
+  if (typeof payload.roomId !== 'string' || !payload.roomId.trim()) return false;
+  return true;
+}
+
+function normalizeHandKey(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
 }
 
 function buildInitials(value) {
@@ -94,8 +110,9 @@ export default function Classroom() {
 
   const token = searchParams.get('token') || null;
   const tokenPayload = parseTokenPayload(token);
-  const displayName = useRef(tokenPayload?.displayName || `User-${Math.floor(Math.random() * 9000 + 1000)}`);
-  const userRole = tokenPayload?.role || 'candidate';
+  const hasValidToken = Boolean(token && isValidParticipantToken(tokenPayload));
+  const displayName = useRef(hasValidToken ? tokenPayload.displayName.trim() : 'Guest');
+  const userRole = hasValidToken ? tokenPayload.role : 'candidate';
   const isTrainer = userRole === 'trainer';
 
   const [micOn, setMicOn] = useState(true);
@@ -290,6 +307,10 @@ export default function Classroom() {
 
     async function prepareRoom() {
       try {
+        if (!hasValidToken) {
+          throw new Error('A valid meeting token is required. Return to the dashboard and join again.');
+        }
+
         const roomResponse = await fetch(`${BACKEND_URL}/api/rooms/${roomId}`);
         if (!roomResponse.ok) {
           const data = await roomResponse.json().catch(() => ({}));
@@ -319,7 +340,7 @@ export default function Classroom() {
       stopPreview();
       janusService.destroy();
     };
-  }, [roomId, setupAttempt, stopPreview]);
+  }, [hasValidToken, roomId, setupAttempt, stopPreview]);
 
   useEffect(() => {
     if (!roomChecked || connected || !navigator.mediaDevices?.enumerateDevices) return;
@@ -418,9 +439,11 @@ export default function Classroom() {
     switch (signal.type) {
       case 'hand-raise':
         setRaisedHands((previous) => {
-          if (signal.raised) return { ...previous, [signal.senderName || signal.display]: true };
+          const handKey = normalizeHandKey(signal.senderName || signal.display);
+          if (!handKey) return previous;
+          if (signal.raised) return { ...previous, [handKey]: true };
           const next = { ...previous };
-          delete next[signal.senderName || signal.display];
+          delete next[handKey];
           return next;
         });
         break;
@@ -476,6 +499,11 @@ export default function Classroom() {
   }, [isTrainer, navigate, showNotice]);
 
   const handleEnterRoom = useCallback(async () => {
+    if (!hasValidToken) {
+      setError('A valid meeting token is required. Return to the dashboard and rejoin this room.');
+      setSetupStatus('Token required');
+      return;
+    }
     if (!roomChecked || joining) return;
 
     setJoining(true);
@@ -529,8 +557,8 @@ export default function Classroom() {
       setSetupStatus('Connecting session signals');
       try {
         await janusService.connectSignaling(roomId, token);
-      } catch {
-        showNotice('info', 'Live signaling is unavailable. Core media will still load.', 4200);
+      } catch (err) {
+        showNotice('error', err?.message || 'Live signaling is unavailable. Core media will still load.', 4200);
       }
 
       setSetupStatus('Starting session conversation');
@@ -551,7 +579,7 @@ export default function Classroom() {
     } finally {
       setJoining(false);
     }
-  }, [appendUniqueMessages, camOn, handleIncomingSignal, joining, micOn, roomChecked, roomId, selectedAudioDeviceId, selectedVideoDeviceId, showNotice, stopPreview, token]);
+  }, [appendUniqueMessages, camOn, handleIncomingSignal, hasValidToken, joining, micOn, roomChecked, roomId, selectedAudioDeviceId, selectedVideoDeviceId, showNotice, stopPreview, token]);
 
   useEffect(() => {
     if (!connected) return;
@@ -646,9 +674,13 @@ export default function Classroom() {
 
   const handleToggleHand = useCallback(() => {
     const next = !handRaised;
+    const signalResult = janusService.sendSignal(roomId, { type: 'hand-raise', raised: next, display: displayName.current });
+    if (!signalResult?.sent) {
+      showNotice('error', 'Hand raise is unavailable until session signaling reconnects.', 3600);
+      return;
+    }
     setHandRaised(next);
-    janusService.sendSignal(roomId, { type: 'hand-raise', raised: next, display: displayName.current });
-  }, [handRaised, roomId]);
+  }, [handRaised, roomId, showNotice]);
 
   const handlePin = useCallback((feed) => {
     setPinnedFeed((previous) => (previous && previous.pubId === feed.pubId && previous.type === feed.type ? null : feed));
@@ -709,7 +741,7 @@ export default function Classroom() {
             ? 'Camera is ready. Microphone is muted for entry.'
             : 'Microphone is ready. Camera is off for entry.';
 
-  const canEnterRoom = roomChecked && !joining && (!previewError || (!micOn && !camOn));
+  const canEnterRoom = hasValidToken && roomChecked && !joining && (!previewError || (!micOn && !camOn));
     const deviceSelectorSupported = typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.enumerateDevices);
     const audioDeviceHint = !deviceSelectorSupported
       ? 'This browser can only use the default microphone.'
@@ -766,7 +798,7 @@ export default function Classroom() {
           </div>
         )}
         {filteredRemote.map(([publisherId, { display, stream }]) => (
-          <RemoteVideo key={publisherId} pubId={publisherId} display={display} stream={stream} handRaised={!!raisedHands[display]} onPin={() => handlePin({ type: 'remote', pubId: publisherId, display, stream })} />
+          <RemoteVideo key={publisherId} pubId={publisherId} display={display} stream={stream} handRaised={!!raisedHands[normalizeHandKey(display)]} onPin={() => handlePin({ type: 'remote', pubId: publisherId, display, stream })} />
         ))}
       </div>
     );
@@ -937,12 +969,12 @@ export default function Classroom() {
                     <div className="teams-person__av">{(display || 'P')[0].toUpperCase()}</div>
                     <div className="teams-person__info"><span className="teams-person__name">{display || 'Participant'}</span></div>
                     <div className="teams-person__acts">
-                      {raisedHands[display] && <span className="teams-person__hand"><IconHandRaise /></span>}
+                      {raisedHands[normalizeHandKey(display)] && <span className="teams-person__hand"><IconHandRaise /></span>}
                       {isTrainer && (
                         <div className="teams-person__trainer-btns">
                           <button onClick={() => handleForceMute(publisherId)} title="Mute"><IconMicOff /></button>
                           <button onClick={() => handleSpotlight(publisherId)} title="Spotlight"><IconSpotlight /></button>
-                          {raisedHands[display] && <button onClick={() => handleDismissHand(publisherId)} title="Lower hand"><IconHandRaise /></button>}
+                          {raisedHands[normalizeHandKey(display)] && <button onClick={() => handleDismissHand(publisherId)} title="Lower hand"><IconHandRaise /></button>}
                           <button className="teams-btn-danger" onClick={() => handleKick(publisherId)} title="Remove"><IconKick /></button>
                         </div>
                       )}
@@ -961,10 +993,10 @@ export default function Classroom() {
           <button className={`teams-ctrl ${!camOn ? 'teams-ctrl--off' : ''}`} onClick={handleToggleCam} title={camOn ? 'Turn off camera' : 'Turn on camera'}>{camOn ? <IconCam /> : <IconCamOff />}</button>
           <button className={`teams-ctrl ${sharing ? 'teams-ctrl--active' : ''}`} onClick={handleScreenShare} title="Share screen"><IconScreenShare /></button>
           <button className={`teams-ctrl ${handRaised ? 'teams-ctrl--active' : ''}`} onClick={handleToggleHand} title={handRaised ? 'Lower hand' : 'Raise hand'}><IconHandRaise /></button>
-          <div style={{ position: 'relative' }}>
-            <button className="teams-ctrl" onClick={() => setShowMore((v) => !v)} title="More options"><IconMore /></button>
+          <div className="gm-more-anchor">
+            <button className="teams-ctrl" onClick={() => setShowMore((v) => !v)} title="More options" aria-haspopup="menu" aria-expanded={showMore}><IconMore /></button>
             {showMore && (
-              <div className="gm-more-menu" onClick={() => setShowMore(false)}>
+              <div className="gm-more-menu" role="menu" onClick={() => setShowMore(false)}>
                 <button className={`gm-more-item ${showWhiteboard ? 'gm-more-item--active' : ''}`} onClick={toggleWhiteboard}>
                   <IconWhiteboard /> {showWhiteboard ? 'Close whiteboard' : 'Open whiteboard'}
                 </button>

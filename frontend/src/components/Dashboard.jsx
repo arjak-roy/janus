@@ -15,13 +15,49 @@ function resolveBackendUrl() {
 
 const BACKEND_URL = resolveBackendUrl();
 const API_SHARED_SECRET = (import.meta.env.VITE_API_SHARED_SECRET || '').trim();
+const PROFILE_STORAGE_KEY = 'gts-meet-profile';
+
+function createParticipantId(role) {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return `${role}-${Date.now().toString(36)}-${suffix}`;
+}
+
+function loadProfile() {
+  try {
+    const raw = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const displayName = typeof parsed.displayName === 'string' ? parsed.displayName.trim() : '';
+    const role = parsed.role === 'trainer' ? 'trainer' : 'candidate';
+    const userId = typeof parsed.userId === 'string' ? parsed.userId.trim() : '';
+    return { displayName, role, userId };
+  } catch {
+    return null;
+  }
+}
+
+function saveProfile(profile) {
+  try {
+    window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  } catch {
+    return;
+  }
+}
 
 export default function Dashboard() {
+  const savedProfile = loadProfile();
   const [roomId, setRoomId] = useState('');
   const [currentTime, setCurrentTime] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [joining, setJoining] = useState(false);
   const [inputError, setInputError] = useState('');
   const [actionError, setActionError] = useState('');
+  const [participant, setParticipant] = useState({
+    displayName: savedProfile?.displayName || '',
+    role: savedProfile?.role || 'candidate',
+    userId: savedProfile?.userId || ''
+  });
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -31,7 +67,50 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleJoinById = (e) => {
+  const ensureParticipantProfile = () => {
+    const displayName = participant.displayName.trim();
+    if (!displayName) {
+      throw new Error('Enter your name before joining a meeting.');
+    }
+
+    const role = participant.role === 'trainer' ? 'trainer' : 'candidate';
+    const userId = participant.userId || createParticipantId(role);
+    const normalized = { displayName, role, userId };
+    setParticipant(normalized);
+    saveProfile(normalized);
+    return normalized;
+  };
+
+  const requestParticipantToken = async (targetRoomId, profile) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (API_SHARED_SECRET) {
+      headers['x-api-secret'] = API_SHARED_SECRET;
+    }
+
+    const tokenResponse = await fetch(`${BACKEND_URL}/api/rooms/${targetRoomId}/token`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        userId: profile.userId,
+        displayName: profile.displayName,
+        role: profile.role
+      })
+    });
+
+    if (!tokenResponse.ok) {
+      const data = await tokenResponse.json().catch(() => ({}));
+      throw new Error(data.error || 'Unable to create a secure join token.');
+    }
+
+    const tokenData = await tokenResponse.json();
+    if (!tokenData?.success || !tokenData?.token) {
+      throw new Error('Token service returned an invalid response.');
+    }
+
+    return tokenData.token;
+  };
+
+  const handleJoinById = async (e) => {
     e.preventDefault();
     const trimmed = roomId.trim();
     if (!trimmed) return;
@@ -40,15 +119,36 @@ export default function Dashboard() {
       setInputError('Room ID must be a number');
       return;
     }
-    setInputError('');
-    navigate(`/room/${trimmed}`);
+
+    try {
+      setJoining(true);
+      setInputError('');
+
+      const profile = ensureParticipantProfile();
+      const roomResponse = await fetch(`${BACKEND_URL}/api/rooms/${trimmed}`);
+      if (!roomResponse.ok) {
+        const data = await roomResponse.json().catch(() => ({}));
+        throw new Error(data.error || 'Meeting not found. Check the room code and try again.');
+      }
+
+      const roomData = await roomResponse.json();
+      const targetRoomId = roomData?.room?.janusId || trimmed;
+      const token = await requestParticipantToken(targetRoomId, profile);
+      navigate(`/room/${targetRoomId}?token=${encodeURIComponent(token)}`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to join this meeting right now.');
+    } finally {
+      setJoining(false);
+    }
   };
 
   const handleCreateRoom = async () => {
     try {
-      setLoading(true);
+      setCreating(true);
       setActionError('');
       setInputError('');
+
+      const profile = ensureParticipantProfile();
       const headers = { 'Content-Type': 'application/json' };
       if (API_SHARED_SECRET) {
         headers['x-api-secret'] = API_SHARED_SECRET;
@@ -63,8 +163,9 @@ export default function Dashboard() {
         throw new Error(data.error || 'Unable to create a meeting right now.');
       }
       const data = await res.json();
-      if (data.success) {
-        navigate(`/room/${data.room.janusId}`);
+      if (data.success && data.room?.janusId) {
+        const token = await requestParticipantToken(data.room.janusId, profile);
+        navigate(`/room/${data.room.janusId}?token=${encodeURIComponent(token)}`);
         return;
       }
       throw new Error('Meeting creation did not return a valid join link.');
@@ -72,7 +173,7 @@ export default function Dashboard() {
       console.error('Failed to create room:', err);
       setActionError(err instanceof Error ? err.message : 'Unable to create a meeting right now.');
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   };
 
@@ -93,9 +194,43 @@ export default function Dashboard() {
           <h1>Video calls and meetings for everyone</h1>
           <p>Connect, collaborate, and host sessions from anywhere with GTS Meet.</p>
 
+          <div className="meet-profile-row">
+            <label className="meet-field" htmlFor="participant-name">
+              <span>Your name</span>
+              <input
+                id="participant-name"
+                type="text"
+                value={participant.displayName}
+                onChange={(e) => {
+                  setParticipant((previous) => ({ ...previous, displayName: e.target.value }));
+                  setActionError('');
+                }}
+                placeholder="Enter display name"
+                maxLength={64}
+                autoComplete="name"
+              />
+            </label>
+
+            <label className="meet-field meet-field--compact" htmlFor="participant-role">
+              <span>Role</span>
+              <select
+                id="participant-role"
+                value={participant.role}
+                onChange={(e) => {
+                  const nextRole = e.target.value === 'trainer' ? 'trainer' : 'candidate';
+                  setParticipant((previous) => ({ ...previous, role: nextRole, userId: '' }));
+                  setActionError('');
+                }}
+              >
+                <option value="candidate">Participant</option>
+                <option value="trainer">Host</option>
+              </select>
+            </label>
+          </div>
+
           <div className="meet-action-row">
-            <button className="meet-new-btn" onClick={handleCreateRoom} disabled={loading}>
-              {loading ? <><span className="meet-spinner" /> Creating...</> : 'New meeting'}
+            <button className="meet-new-btn" onClick={handleCreateRoom} disabled={creating || joining}>
+              {creating ? <><span className="meet-spinner" /> Creating...</> : 'New meeting'}
             </button>
 
             <span className="meet-divider" />
@@ -108,8 +243,8 @@ export default function Dashboard() {
                 placeholder="Enter a code"
                 className="meet-join-input"
               />
-              <button type="submit" className="meet-join-btn" disabled={!roomId.trim()}>
-                Join
+              <button type="submit" className="meet-join-btn" disabled={!roomId.trim() || creating || joining}>
+                {joining ? 'Joining...' : 'Join'}
               </button>
             </form>
           </div>

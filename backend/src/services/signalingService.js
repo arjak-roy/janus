@@ -91,12 +91,14 @@ export class SignalingService {
     }
 
     if (!participant) {
+      console.warn(`[WebSocket] Rejecting socket for room ${roomIdentifier}: invalid or missing token`);
       ws.close(1008, 'Invalid or missing token');
       return;
     }
 
     const room = await this.roomRepository.findByIdOrJanusId(roomIdentifier);
     if (!room) {
+      console.warn(`[WebSocket] Rejecting socket for room ${roomIdentifier}: room not found`);
       ws.close(1008, 'Room not found');
       return;
     }
@@ -104,6 +106,9 @@ export class SignalingService {
     // Verify token was issued for this room
     const actualRoomId = room.id;
     if (participant.roomId !== actualRoomId && participant.roomId !== String(room.janusId)) {
+      console.warn(
+        `[WebSocket] Rejecting socket for room ${roomIdentifier}: token room mismatch (${participant.roomId})`
+      );
       ws.close(1008, 'Token not valid for this room');
       return;
     }
@@ -124,6 +129,23 @@ export class SignalingService {
     console.log(
       `[WebSocket] ${meta.displayName} (${meta.role}) connected to room ${actualRoomId}. Subscribers: ${this.roomSubscribers.get(actualRoomId).size}`
     );
+
+    try {
+      ws.send(JSON.stringify({
+        __signal: true,
+        type: 'signaling-ready',
+        roomId: actualRoomId,
+        userId: meta.userId,
+        role: meta.role
+      }));
+    } catch (err) {
+      console.error('[WebSocket] Failed to send signaling-ready ack:', err.message);
+      const subs = this.roomSubscribers.get(actualRoomId);
+      subs?.delete(ws);
+      if (subs?.size === 0) this.roomSubscribers.delete(actualRoomId);
+      ws.close(1011, 'Signaling handshake failed');
+      return;
+    }
 
     // Notify others of join
     this.broadcastToRoom(actualRoomId, {
@@ -165,12 +187,15 @@ export class SignalingService {
       }
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code, reasonBuffer) => {
       const subs = this.roomSubscribers.get(actualRoomId);
       if (!subs) return;
 
       subs.delete(ws);
-      console.log(`[WebSocket] ${meta.displayName} disconnected from room ${actualRoomId}. Subscribers: ${subs.size}`);
+      const reason = reasonBuffer?.toString() || 'no reason';
+      console.log(
+        `[WebSocket] ${meta.displayName} disconnected from room ${actualRoomId}. Code: ${code}. Reason: ${reason}. Subscribers: ${subs.size}`
+      );
 
       // Notify others of leave
       this.broadcastToRoom(actualRoomId, {

@@ -100,7 +100,12 @@ Symptoms:
 Checks:
 - inspect browser network tab for `/api/rooms/:roomId/ws`
 - verify Nginx `/api/` location has upgrade headers
-- check backend logs for socket close code 1008 (room not found)
+- check backend logs for socket close code `1008`:
+	- invalid or missing token
+	- room not found
+	- token room mismatch
+- ensure room URLs include `?token=<jwt>` and token has not expired
+- confirm client receives `signaling-ready` before sending hand-raise/whiteboard events
 
 Backend behavior notes:
 - invalid payloads without `__signal` and `type` are dropped

@@ -51,7 +51,8 @@ High-level sequence:
 3. `joinRoom(roomId, display)` attaches VideoRoom plugin as publisher.
 4. `publishOwnFeed()` runs media pre-check and then creates publish offer.
 5. `_subscribeToFeed()` attaches subscriber handles for remote publishers.
-6. `connectSignaling(roomId)` opens backend WebSocket for collaboration events.
+6. `connectSignaling(roomId, token)` opens backend WebSocket for collaboration events.
+7. wait for `signaling-ready` handshake before marking signaling available.
 7. `joinTextRoom(roomId)` attempts TextRoom for chat/fallback signaling.
 8. `destroy()` closes handles, sockets, tracks, and Janus session.
 
@@ -73,8 +74,9 @@ sequenceDiagram
   Janus-->>JanusService: joined event
   JanusService->>Janus: publish own feed
 
-  Classroom->>JanusService: connectSignaling(roomId)
+  Classroom->>JanusService: connectSignaling(roomId, token)
   JanusService->>BackendWS: /api/rooms/:roomId/ws
+  BackendWS-->>JanusService: signaling-ready
 
   Classroom->>JanusService: joinTextRoom(roomId)
   JanusService->>Janus: attach textroom (fallback)
@@ -123,6 +125,7 @@ Signal path:
 1. UI emits collaboration event (`hand-raise` or `wb-*`)
 2. `JanusService.sendSignal` prefers backend WebSocket
 3. if unavailable, fallback to TextRoom signaling envelope
+4. if both are unavailable, send fails and UI should show a capability notice
 
 ## Error and Fallback Behavior
 
