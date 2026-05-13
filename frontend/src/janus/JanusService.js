@@ -832,9 +832,15 @@ class JanusService {
   }
 
   sendChatMessage(roomId, text) {
+    // Prefer WebSocket for real-time delivery + server persistence
+    if (this.sendChatViaWebSocket(text)) {
+      return;
+    }
+
+    // Fallback: TextRoom data channel
     const Janus = getJanus();
     if (!this.textRoomHandle || !this._textRoomReady) {
-      console.warn('[JanusService] TextRoom not ready, cannot send chat message');
+      console.warn('[JanusService] Neither WebSocket nor TextRoom ready, cannot send chat message');
       return;
     }
     this.textRoomHandle.data({
@@ -845,6 +851,23 @@ class JanusService {
         transaction: Janus.randomString(12)
       })
     });
+  }
+
+  sendChatViaWebSocket(content) {
+    if (!this._signalWsReady || !this.signalWs) {
+      return false;
+    }
+    try {
+      this.signalWs.send(JSON.stringify({
+        __signal: true,
+        type: 'chat-message',
+        content
+      }));
+      return true;
+    } catch (err) {
+      console.error('[JanusService] Error sending chat via WebSocket:', err);
+      return false;
+    }
   }
 
   // ── Signaling (hand raise, whiteboard, etc.) ───────────

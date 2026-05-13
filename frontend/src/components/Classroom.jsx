@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, Suspense, lazy } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 
-import WhiteboardSync from './WhiteboardSync.jsx';
+const WhiteboardSync = lazy(() => import('./WhiteboardSync.jsx'));
 import { janusService, resolveMediaAccessError } from '../janus/JanusService.js';
 import './Classroom.css';
 
@@ -28,6 +28,7 @@ const IconSpotlight = () => (<svg width="16" height="16" viewBox="0 0 24 24" fil
 const IconSettings = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>);
 const IconMore = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>);
 const IconBack = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>);
+const IconLink = () => (<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>);
 
 function resolveBackendUrl() {
   const configured = (import.meta.env.VITE_BACKEND_URL || '').trim();
@@ -519,10 +520,20 @@ export default function Classroom() {
       case 'wb-request-snapshot':
         whiteboardSignalHandler.current?.(signal);
         break;
+      case 'chat-message':
+        if (signal.content) {
+          appendUniqueMessages([{
+            id: signal.id,
+            sender: signal.sender,
+            content: signal.content,
+            timestamp: signal.timestamp || new Date().toISOString()
+          }]);
+        }
+        break;
       default:
         break;
     }
-  }, [isTrainer, navigate, showNotice]);
+  }, [appendUniqueMessages, isTrainer, navigate, showNotice]);
 
   const handleEnterRoom = useCallback(async () => {
     if (!hasValidToken) {
@@ -611,7 +622,8 @@ export default function Classroom() {
     if (!connected) return;
     let cancelled = false;
 
-    const poll = async () => {
+    // One-time history load — real-time messages arrive via WebSocket signal
+    const loadHistory = async () => {
       try {
         const res = await fetch(`${BACKEND_URL}/api/rooms/${roomId}/messages?limit=200`);
         if (!res.ok) return;
@@ -628,11 +640,9 @@ export default function Classroom() {
       }
     };
 
-    poll();
-    const interval = setInterval(poll, 2000);
+    loadHistory();
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
   }, [appendUniqueMessages, connected, roomId]);
 
@@ -683,12 +693,16 @@ export default function Classroom() {
     event.preventDefault();
     if (!chatInput.trim()) return;
     const message = chatInput.trim();
-    janusService.sendChatMessage(roomId, message);
-    fetch(`${BACKEND_URL}/api/rooms/${roomId}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sender: displayName.current, content: message }),
-    }).catch(() => {});
+    // Prefer WebSocket (persists server-side and broadcasts to all)
+    if (!janusService.sendChatViaWebSocket(message)) {
+      // Fallback: TextRoom + REST persist
+      janusService.sendChatMessage(roomId, message);
+      fetch(`${BACKEND_URL}/api/rooms/${roomId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sender: displayName.current, content: message }),
+      }).catch(() => {});
+    }
     setChatInput('');
   }, [chatInput, roomId]);
 
@@ -740,6 +754,23 @@ export default function Classroom() {
       navigate('/');
     }, 1000);
   }, [navigate, roomId]);
+
+  const handleCopyInviteLink = useCallback(async () => {
+    const link = `${window.location.origin}/room/${roomId}`;
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = link;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    }
+    showNotice('info', 'Invite link copied to clipboard.');
+  }, [roomId, showNotice]);
 
   const remoteEntries = Object.entries(remoteFeeds);
   const screenShareEntries = Object.entries(screenShareFeeds);
@@ -925,6 +956,7 @@ export default function Classroom() {
       <div className="teams-header">
         <div className="teams-header__left">
           <span className="teams-header__title">Meeting {roomId}</span>
+          <button className="teams-header__copy" onClick={handleCopyInviteLink} title="Copy invite link"><IconLink /></button>
           <span className="teams-header__duration">{formatDuration(duration)}</span>
         </div>
         <div className="teams-header__right">
@@ -936,7 +968,11 @@ export default function Classroom() {
       <div className="teams-main">
         {hasPresentation && (
           <div className="teams-stage">
-            {showWhiteboard && <WhiteboardSync roomId={roomId} sendSignal={handleSendSignal} signalBus={whiteboardSignalHandler} />}
+            {showWhiteboard && (
+              <Suspense fallback={<div className="whiteboard-loading">Loading whiteboard...</div>}>
+                <WhiteboardSync roomId={roomId} sendSignal={handleSendSignal} signalBus={whiteboardSignalHandler} />
+              </Suspense>
+            )}
             {pinnedFeed && !showWhiteboard && (
               <div className="teams-pinned">
                 <PinnedVideo feed={pinnedFeed} />
@@ -1023,6 +1059,9 @@ export default function Classroom() {
             <button className="teams-ctrl" onClick={() => setShowMore((v) => !v)} title="More options" aria-haspopup="menu" aria-expanded={showMore}><IconMore /></button>
             {showMore && (
               <div className="gm-more-menu" role="menu" onClick={() => setShowMore(false)}>
+                <button className="gm-more-item" onClick={handleCopyInviteLink}>
+                  <IconLink /> Copy invite link
+                </button>
                 <button className={`gm-more-item ${showWhiteboard ? 'gm-more-item--active' : ''}`} onClick={toggleWhiteboard}>
                   <IconWhiteboard /> {showWhiteboard ? 'Close whiteboard' : 'Open whiteboard'}
                 </button>

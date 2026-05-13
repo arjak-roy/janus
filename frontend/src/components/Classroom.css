@@ -299,6 +299,24 @@
   color: #e8eaed;
 }
 
+.teams-header__copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: #9aa0a6;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.teams-header__copy:hover {
+  color: #e8eaed;
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .teams-header__duration {
   font-size: 0.8125rem;
   color: #9aa0a6;

@@ -53,6 +53,8 @@ export default function Dashboard() {
   const [joining, setJoining] = useState(false);
   const [inputError, setInputError] = useState('');
   const [actionError, setActionError] = useState('');
+  const [createdRoom, setCreatedRoom] = useState(null); // { janusId, token }
+  const [linkCopied, setLinkCopied] = useState(false);
   const [participant, setParticipant] = useState({
     displayName: savedProfile?.displayName || '',
     role: savedProfile?.role || 'candidate',
@@ -165,7 +167,8 @@ export default function Dashboard() {
       const data = await res.json();
       if (data.success && data.room?.janusId) {
         const token = await requestParticipantToken(data.room.janusId, profile);
-        navigate(`/room/${data.room.janusId}?token=${encodeURIComponent(token)}`);
+        setCreatedRoom({ janusId: data.room.janusId, token });
+        setLinkCopied(false);
         return;
       }
       throw new Error('Meeting creation did not return a valid join link.');
@@ -178,6 +181,35 @@ export default function Dashboard() {
   };
 
   const errorText = inputError || actionError;
+
+  const createdRoomLink = createdRoom
+    ? `${window.location.origin}/room/${createdRoom.janusId}`
+    : '';
+
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(createdRoomLink);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2500);
+    } catch {
+      // Fallback for older browsers / insecure contexts
+      const textarea = document.createElement('textarea');
+      textarea.value = createdRoomLink;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2500);
+    }
+  };
+
+  const handleJoinCreatedRoom = () => {
+    if (!createdRoom) return;
+    navigate(`/room/${createdRoom.janusId}?token=${encodeURIComponent(createdRoom.token)}`);
+  };
 
   return (
     <div className="meet-dashboard">
@@ -250,6 +282,23 @@ export default function Dashboard() {
           </div>
 
           {errorText && <p className="meet-error">{errorText}</p>}
+
+          {createdRoom && (
+            <div className="meet-share-card">
+              <h3>Your meeting is ready</h3>
+              <p className="meet-share-desc">Share this link with others you want in the meeting. Save it for later use.</p>
+              <div className="meet-share-link-row">
+                <input className="meet-share-link" readOnly value={createdRoomLink} onClick={(e) => e.target.select()} />
+                <button className="meet-copy-btn" onClick={handleCopyLink}>
+                  {linkCopied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <div className="meet-share-actions">
+                <button className="meet-join-now-btn" onClick={handleJoinCreatedRoom}>Join now</button>
+                <button className="meet-dismiss-btn" onClick={() => setCreatedRoom(null)}>Dismiss</button>
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </div>

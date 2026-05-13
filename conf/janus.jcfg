@@ -9,7 +9,7 @@ general: {
 	# api_secret = "janusrocks"
 
 	# Enable debug logs (0-7, 7 is the most verbose)
-	debug_level = 4
+	debug_level = 1
 	debug_timestamps = true
 	debug_colors = true
 }
@@ -17,7 +17,14 @@ general: {
 nat: {
     stun_server = "stun.l.google.com"
     stun_port = 19302
-    nat_1_1_mapping = "13.51.211.112" 
+    nat_1_1_mapping = "13.51.211.112"
+
+    # TURN relay (coturn) for clients behind symmetric NAT
+    turn_server = "13.51.211.112"
+    turn_port = 3478
+    turn_type = "udp"
+    turn_user = "janususer"
+    turn_pwd = "turnpassword"
 }
 media: {
 	# This is where you configure media settings. We use defaults.

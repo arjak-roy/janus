@@ -265,3 +265,93 @@
     font-size: 1.75rem;
   }
 }
+
+/* ── Share Card ── */
+.meet-share-card {
+  margin-top: 20px;
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--gm-surface, #f8f9fa);
+  border: 1px solid var(--gm-border, #e0e0e0);
+  width: 100%;
+}
+
+.meet-share-card h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.meet-share-desc {
+  margin: 0 0 14px;
+  font-size: 0.8125rem;
+  color: var(--gm-text-secondary, #5f6368);
+}
+
+.meet-share-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.meet-share-link {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--gm-border, #dadce0);
+  background: var(--gm-bg, #fff);
+  font-size: 0.8125rem;
+  color: var(--gm-text);
+  cursor: text;
+}
+
+.meet-copy-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  background: var(--gm-blue-strong, #1a73e8);
+  color: #fff;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.meet-copy-btn:hover {
+  opacity: 0.9;
+}
+
+.meet-share-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.meet-join-now-btn {
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: none;
+  background: var(--gm-green, #1e8e3e);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.meet-join-now-btn:hover {
+  opacity: 0.9;
+}
+
+.meet-dismiss-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--gm-border, #dadce0);
+  background: transparent;
+  color: var(--gm-text-secondary, #5f6368);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.meet-dismiss-btn:hover {
+  background: var(--gm-surface-hover, #f1f3f4);
+}

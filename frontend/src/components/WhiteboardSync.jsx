@@ -146,7 +146,7 @@ export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
 
     // Periodic full snapshots for late joiners
     const now = Date.now();
-    if (now - lastSnapshotAtRef.current >= 2000) {
+    if (now - lastSnapshotAtRef.current >= 5000) {
       sendSignal({
         type: 'wb-snapshot',
         elements: nextElements,
@@ -266,9 +266,9 @@ export default function WhiteboardSync({ roomId, sendSignal, signalBus }) {
       lastSentElements.current.set(el.id, JSON.stringify(el));
     }
 
-    // Start polling for changes every 50ms
+    // Start polling for changes every 100ms
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    pollIntervalRef.current = setInterval(flushChanges, 50);
+    pollIntervalRef.current = setInterval(flushChanges, 100);
 
     if (!hasRequestedSnapshot.current) {
       hasRequestedSnapshot.current = true;

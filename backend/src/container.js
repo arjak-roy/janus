@@ -22,7 +22,7 @@ export function createContainer() {
   const roomService = new RoomService(roomRepository, janusApiService);
   const messageService = new MessageService(roomRepository, messageRepository);
   const healthService = new HealthService(prisma);
-  const signalingService = new SignalingService(roomRepository, tokenService);
+  const signalingService = new SignalingService(roomRepository, tokenService, messageRepository);
   const cleanupService = new CleanupService(roomRepository, janusApiService);
 
   return {

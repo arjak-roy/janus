@@ -1,7 +1,8 @@
 export class SignalingService {
-  constructor(roomRepository, tokenService) {
+  constructor(roomRepository, tokenService, messageRepository) {
     this.roomRepository = roomRepository;
     this.tokenService = tokenService;
+    this.messageRepository = messageRepository;
     // Map<roomId, Map<ws, { userId, displayName, role, joinedAt }>>
     this.roomSubscribers = new Map();
   }
@@ -161,6 +162,30 @@ export class SignalingService {
         const message = JSON.parse(rawData);
         if (!message.__signal || !message.type) {
           console.warn('[WebSocket] Invalid signal format received');
+          return;
+        }
+
+        // Chat message — persist and broadcast to all (including sender for confirmation)
+        if (message.type === 'chat-message') {
+          const content = typeof message.content === 'string' ? message.content.trim() : '';
+          if (!content) return;
+          this.messageRepository.create({
+            roomId: actualRoomId,
+            sender: meta.displayName,
+            content
+          }).then((saved) => {
+            this.broadcastToRoom(actualRoomId, {
+              __signal: true,
+              type: 'chat-message',
+              id: saved.id,
+              sender: meta.displayName,
+              senderId: meta.userId,
+              content: saved.content,
+              timestamp: saved.createdAt.toISOString()
+            });
+          }).catch((err) => {
+            console.error('[WebSocket] Failed to persist chat message:', err.message);
+          });
           return;
         }
 

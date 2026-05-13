@@ -46,7 +46,7 @@ export class JanusApiService {
           room: roomId,
           description: roomConfig.name || `Room ${roomId}`,
           publishers: roomConfig.maxUsers || 6,
-          bitrate: 512000,
+          bitrate: 384000,
           fir_freq: 10,
           audiocodec: 'opus',
           videocodec: 'vp8',
