@@ -212,16 +212,87 @@ class JanusService {
           console.error('[JanusService] VideoRoom attach error:', err);
           reject(err);
         },
+        iceState: (state) => {
+          console.log('[JanusService] Publisher ICE state:', state);
+          if (state === 'disconnected') {
+            // ICE disconnected — start a grace period for recovery
+            this._iceDisconnectTimer = window.setTimeout(() => {
+              console.warn('[JanusService] ICE still disconnected, attempting ICE restart');
+              if (this.videoRoomHandle) {
+                this.videoRoomHandle.createOffer({
+                  iceRestart: true,
+                  tracks: buildPublisherTracks(this.initialPublishOptions),
+                  success: (jsep) => {
+                    this.videoRoomHandle.send({
+                      message: { request: 'configure', restart: true },
+                      jsep
+                    });
+                  },
+                  error: (err) => console.error('[JanusService] ICE restart offer error:', err)
+                });
+              }
+            }, 3000);
+          } else if (state === 'connected' || state === 'completed') {
+            if (this._iceDisconnectTimer) {
+              window.clearTimeout(this._iceDisconnectTimer);
+              this._iceDisconnectTimer = null;
+            }
+          } else if (state === 'failed') {
+            if (this._iceDisconnectTimer) {
+              window.clearTimeout(this._iceDisconnectTimer);
+              this._iceDisconnectTimer = null;
+            }
+            console.error('[JanusService] Publisher ICE failed, attempting immediate restart');
+            if (this.videoRoomHandle) {
+              this.videoRoomHandle.createOffer({
+                iceRestart: true,
+                tracks: buildPublisherTracks(this.initialPublishOptions),
+                success: (jsep) => {
+                  this.videoRoomHandle.send({
+                    message: { request: 'configure', restart: true },
+                    jsep
+                  });
+                },
+                error: (err) => console.error('[JanusService] ICE restart offer error:', err)
+              });
+            }
+          }
+        },
+        webrtcState: (isConnected) => {
+          console.log('[JanusService] Publisher WebRTC state:', isConnected ? 'up' : 'down');
+        },
+        slowLink: (uplink, lost) => {
+          console.warn(`[JanusService] Publisher slow link: uplink=${uplink}, lost=${lost}`);
+        },
         onmessage: (msg, jsep) => this._onVideoRoomMessage(msg, jsep),
         onlocaltrack: (track, on) => {
           console.log('[JanusService] Local track', track.kind, on ? 'added' : 'removed');
           if (on) {
             if (!this.myStream) this.myStream = new MediaStream();
+            // Replace existing track of the same kind (handles renegotiation)
+            const existing = this.myStream.getTracks().find(t => t.kind === track.kind);
+            if (existing && existing.id !== track.id) {
+              this.myStream.removeTrack(existing);
+            }
             if (!this.myStream.getTracks().find(t => t.id === track.id)) {
               this.myStream.addTrack(track);
             }
           } else if (this.myStream) {
-            this.myStream.removeTrack(track);
+            // During renegotiation, only remove if no replacement of same kind was already added
+            const sameKind = this.myStream.getTracks().filter(t => t.kind === track.kind);
+            if (sameKind.length > 1) {
+              // A newer track of same kind exists, safe to remove the old one
+              this.myStream.removeTrack(track);
+            } else if (sameKind.length === 1 && sameKind[0].id === track.id) {
+              // Delay removal briefly — a replacement track may arrive immediately after
+              setTimeout(() => {
+                if (this.myStream && !this.myStream.getTracks().find(t => t.kind === track.kind && t.id !== track.id)) {
+                  this.myStream.removeTrack(track);
+                  this.onLocalStream?.(this.myStream);
+                }
+              }, 200);
+              return; // Don't notify yet
+            }
           }
           // Always call callback so React knows there's an update
           if (this.myStream) this.onLocalStream?.(this.myStream);
@@ -485,21 +556,38 @@ class JanusService {
     this.janus.attach({
       plugin: 'janus.plugin.videoroom',
       success: (handle) => {
-        this._feeds[publisherId] = { handle, display };
+        this._feeds[publisherId] = { handle, display, stream: null };
         handle.send({
           message: { request: 'join', room: this._currentRoom, ptype: 'subscriber', feed: publisherId }
         });
       },
       error: (err) => console.error('Subscribe attach error:', err),
+      iceState: (state) => {
+        console.log(`[JanusService] Subscriber ICE state (${display}):`, state);
+        if (state === 'disconnected' || state === 'failed') {
+          console.warn(`[JanusService] Subscriber ICE ${state} for ${display}, requesting keyframe`);
+          const handle = this._feeds[publisherId]?.handle;
+          if (handle) {
+            handle.send({ message: { request: 'configure', restart: true } });
+          }
+        }
+      },
+      webrtcState: (isConnected) => {
+        console.log(`[JanusService] Subscriber WebRTC state (${display}):`, isConnected ? 'up' : 'down');
+      },
+      slowLink: (uplink, lost) => {
+        console.warn(`[JanusService] Subscriber slow link (${display}): uplink=${uplink}, lost=${lost}`);
+      },
       onmessage: (msg, jsep) => {
         if (jsep) {
           const handle = this._feeds[publisherId]?.handle;
           handle?.createAnswer({
             jsep,
-            tracks: [{ type: 'data' }],
-            media: { audioSend: false, videoSend: false },
-            success: (jsep) => {
-              handle.send({ message: { request: 'start' }, jsep });
+            success: (answerJsep) => {
+              handle.send({ message: { request: 'start' }, jsep: answerJsep });
+            },
+            error: (err) => {
+              console.error(`[JanusService] Subscriber createAnswer error (${display}):`, err);
             }
           });
         }
@@ -507,15 +595,30 @@ class JanusService {
       onremotetrack: (track, mid, on) => {
         if (!this._feeds[publisherId]) return;
         if (on) {
-          if (!this._feeds[publisherId].stream) this._feeds[publisherId].stream = new MediaStream();
-          let stream = this._feeds[publisherId].stream;
+          if (!this._feeds[publisherId].stream) {
+            this._feeds[publisherId].stream = new MediaStream();
+          }
+          const stream = this._feeds[publisherId].stream;
+          // Replace existing track of the same kind to handle renegotiation
+          const existingTrack = stream.getTracks().find(t => t.kind === track.kind);
+          if (existingTrack && existingTrack.id !== track.id) {
+            stream.removeTrack(existingTrack);
+          }
           if (!stream.getTracks().find(t => t.id === track.id)) {
             stream.addTrack(track);
           }
           this.onRemoteStream?.(publisherId, display, stream);
         } else if (this._feeds[publisherId].stream) {
-          this._feeds[publisherId].stream.removeTrack(track);
-          this.onRemoteStream?.(publisherId, display, this._feeds[publisherId].stream);
+          // Only remove if this exact track is still in the stream
+          const stream = this._feeds[publisherId].stream;
+          const trackInStream = stream.getTracks().find(t => t.id === track.id);
+          if (trackInStream) {
+            stream.removeTrack(trackInStream);
+          }
+          // Only notify gone if no tracks remain; otherwise it's a renegotiation
+          if (stream.getTracks().length > 0) {
+            this.onRemoteStream?.(publisherId, display, stream);
+          }
         }
       },
       oncleanup: () => {
@@ -540,14 +643,18 @@ class JanusService {
       // Subscribe to existing publishers
       if (msg.publishers) {
         msg.publishers.forEach((pub) => {
-          this._subscribeToFeed(pub.id, pub.display);
+          if (!this._feeds[pub.id]) {
+            this._subscribeToFeed(pub.id, pub.display);
+          }
         });
       }
     } else if (event === 'event') {
       // New publisher arrived
       if (msg.publishers) {
         msg.publishers.forEach((pub) => {
-          this._subscribeToFeed(pub.id, pub.display);
+          if (!this._feeds[pub.id]) {
+            this._subscribeToFeed(pub.id, pub.display);
+          }
         });
       }
       // Publisher left
@@ -570,7 +677,7 @@ class JanusService {
       }
     }
 
-    // Handle incoming JSEP (answer to our offer)
+    // Handle incoming JSEP (answer to our offer, or renegotiation offer)
     if (jsep) {
       this.videoRoomHandle.handleRemoteJsep({ jsep });
     }
@@ -778,6 +885,12 @@ class JanusService {
 
   // ── Cleanup ────────────────────────────────────────────
   destroy() {
+    // Clear any pending ICE restart timer
+    if (this._iceDisconnectTimer) {
+      window.clearTimeout(this._iceDisconnectTimer);
+      this._iceDisconnectTimer = null;
+    }
+
     // Close WebSocket signaling
     if (this.signalWs) {
       this.signalWs.close();

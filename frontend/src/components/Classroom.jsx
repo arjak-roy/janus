@@ -264,7 +264,25 @@ export default function Classroom() {
   useEffect(() => {
     if (connected && localVideoRef.current && localStreamRef.current) {
       localVideoRef.current.srcObject = localStreamRef.current;
+      // Ensure playback resumes (e.g., after page visibility change in iframe)
+      if (localVideoRef.current.paused) {
+        localVideoRef.current.play().catch(() => {});
+      }
     }
+  }, [connected, localStreamReady]);
+
+  // Resume video playback when page becomes visible again (iframe embed scenario)
+  useEffect(() => {
+    if (!connected) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        if (localVideoRef.current?.paused && localStreamRef.current) {
+          localVideoRef.current.play().catch(() => {});
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [connected]);
 
   const formatDuration = (seconds) => {
@@ -530,10 +548,10 @@ export default function Classroom() {
       };
       janusService.onRemoteStream = (publisherId, display, stream) => {
         if (display?.endsWith('(screen)')) {
-          setScreenShareFeeds((previous) => ({ ...previous, [publisherId]: { display, stream } }));
+          setScreenShareFeeds((previous) => ({ ...previous, [publisherId]: { display, stream, _ts: Date.now() } }));
           return;
         }
-        setRemoteFeeds((previous) => ({ ...previous, [publisherId]: { display, stream } }));
+        setRemoteFeeds((previous) => ({ ...previous, [publisherId]: { display, stream, _ts: Date.now() } }));
       };
       janusService.onRemoteGone = (publisherId) => {
         setRemoteFeeds((previous) => {
@@ -1029,7 +1047,33 @@ function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (videoRef.current && stream) videoRef.current.srcObject = stream;
+    const videoEl = videoRef.current;
+    if (!videoEl || !stream) return;
+
+    // Set srcObject if it changed or is not set
+    if (videoEl.srcObject !== stream) {
+      videoEl.srcObject = stream;
+    }
+
+    // When tracks are added to a live MediaStream after srcObject is already
+    // assigned, some browsers won't auto-play the new tracks. Listen for
+    // addtrack to ensure the video starts playing.
+    const handleTrackAdded = () => {
+      if (videoEl.paused) {
+        videoEl.play().catch(() => {});
+      }
+    };
+
+    stream.addEventListener('addtrack', handleTrackAdded);
+
+    // Also handle the case where tracks already exist but video isn't playing
+    if (stream.getTracks().length > 0 && videoEl.paused) {
+      videoEl.play().catch(() => {});
+    }
+
+    return () => {
+      stream.removeEventListener('addtrack', handleTrackAdded);
+    };
   }, [stream]);
 
   return (
@@ -1046,7 +1090,28 @@ function PinnedVideo({ feed }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    if (videoRef.current && feed.stream) videoRef.current.srcObject = feed.stream;
+    const videoEl = videoRef.current;
+    if (!videoEl || !feed.stream) return;
+
+    if (videoEl.srcObject !== feed.stream) {
+      videoEl.srcObject = feed.stream;
+    }
+
+    const handleTrackAdded = () => {
+      if (videoEl.paused) {
+        videoEl.play().catch(() => {});
+      }
+    };
+
+    feed.stream.addEventListener('addtrack', handleTrackAdded);
+
+    if (feed.stream.getTracks().length > 0 && videoEl.paused) {
+      videoEl.play().catch(() => {});
+    }
+
+    return () => {
+      feed.stream.removeEventListener('addtrack', handleTrackAdded);
+    };
   }, [feed.stream]);
 
   return (
