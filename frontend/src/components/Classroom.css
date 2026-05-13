@@ -465,6 +465,15 @@
   display: block;
 }
 
+.teams-tile audio,
+.teams-pinned-video audio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .teams-tile__label {
   position: absolute;
   left: 0;

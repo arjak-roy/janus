@@ -367,6 +367,31 @@ class JanusService {
   // ── Screen Share (second publisher handle) ──────────────
   startScreenShare(roomId, displayName = 'Screen') {
     return new Promise((resolve, reject) => {
+      let publishSent = false;
+
+      const doPublish = (handle) => {
+        if (publishSent) return;
+        publishSent = true;
+
+        handle.createOffer({
+          tracks: [
+            { type: 'screen', capture: true },
+            { type: 'audio', capture: false }
+          ],
+          success: (jsep) => {
+            handle.send({
+              message: { request: 'configure', video: true, audio: false },
+              jsep
+            });
+            resolve(handle);
+          },
+          error: (err) => {
+            console.error('[JanusService] Screen share offer error:', err);
+            reject(err);
+          }
+        });
+      };
+
       this.janus.attach({
         plugin: 'janus.plugin.videoroom',
         success: (handle) => {
@@ -379,31 +404,14 @@ class JanusService {
               display: `${displayName} (screen)`
             }
           });
-
-          // Wait a short moment for the join to be accepted
-          setTimeout(() => {
-            handle.createOffer({
-              tracks: [
-                { type: 'screen', capture: true },
-                { type: 'audio', capture: false }
-              ],
-              success: (jsep) => {
-                handle.send({
-                  message: { request: 'configure', video: true, audio: false },
-                  jsep
-                });
-                resolve(handle);
-              },
-              error: (err) => {
-                console.error('Screen share offer error:', err);
-                reject(err);
-              }
-            });
-          }, 500);
         },
         onmessage: (msg, jsep) => {
+          // Wait for the 'joined' event before publishing
+          if (msg.videoroom === 'joined' && this.screenShareHandle) {
+            doPublish(this.screenShareHandle);
+          }
           // Handle answer from Janus
-          if (jsep) {
+          if (jsep && this.screenShareHandle) {
             this.screenShareHandle.handleRemoteJsep({ jsep });
           }
         },
@@ -583,6 +591,8 @@ class JanusService {
           const handle = this._feeds[publisherId]?.handle;
           handle?.createAnswer({
             jsep,
+            // Explicitly receive all media — do not send anything
+            media: { audioSend: false, videoSend: false },
             success: (answerJsep) => {
               handle.send({ message: { request: 'start' }, jsep: answerJsep });
             },

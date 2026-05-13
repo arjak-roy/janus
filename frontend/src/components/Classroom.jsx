@@ -1053,6 +1053,7 @@ export default function Classroom() {
 
 function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
   const videoRef = useRef(null);
+  const audioRef = useRef(null);
 
   // Callback ref: assigns srcObject immediately when the element mounts,
   // guaranteeing video plays even when the same stream object is reused
@@ -1065,29 +1066,43 @@ function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
     }
   }, [stream]);
 
+  // Separate audio element ensures audio is never blocked by video playback issues
+  const setAudioRef = useCallback((el) => {
+    audioRef.current = el;
+    if (el && stream) {
+      el.srcObject = stream;
+      el.play().catch(() => {});
+    }
+  }, [stream]);
+
   useEffect(() => {
     const videoEl = videoRef.current;
-    if (!videoEl || !stream) return;
+    const audioEl = audioRef.current;
+    if (!stream) return;
 
     // Re-assign if stream changed after initial mount
-    if (videoEl.srcObject !== stream) {
+    if (videoEl && videoEl.srcObject !== stream) {
       videoEl.srcObject = stream;
       videoEl.play().catch(() => {});
+    }
+    if (audioEl && audioEl.srcObject !== stream) {
+      audioEl.srcObject = stream;
+      audioEl.play().catch(() => {});
     }
 
     // When tracks are added to a live MediaStream after srcObject is already
     // assigned, some browsers won't auto-play the new tracks.
     const handleTrackAdded = () => {
-      if (videoEl.paused) {
-        videoEl.play().catch(() => {});
-      }
+      if (videoEl?.paused) videoEl.play().catch(() => {});
+      if (audioEl?.paused) audioEl.play().catch(() => {});
     };
 
     stream.addEventListener('addtrack', handleTrackAdded);
 
-    // Also handle the case where tracks already exist but video isn't playing
-    if (stream.getTracks().length > 0 && videoEl.paused) {
-      videoEl.play().catch(() => {});
+    // Also handle the case where tracks already exist but elements aren't playing
+    if (stream.getTracks().length > 0) {
+      if (videoEl?.paused) videoEl.play().catch(() => {});
+      if (audioEl?.paused) audioEl.play().catch(() => {});
     }
 
     return () => {
@@ -1098,6 +1113,7 @@ function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
   return (
     <div className="teams-tile" id={`remote-${pubId}`}>
       <video ref={setVideoRef} autoPlay playsInline />
+      <audio ref={setAudioRef} autoPlay />
       <div className="teams-tile__label"><span className="teams-tile__name">{display || 'Participant'}</span></div>
       {handRaised && <div className="teams-hand-badge"><IconHandRaise /></div>}
       {onPin && <button className="teams-pin-btn" onClick={onPin} title="Pin"><IconPin /></button>}
@@ -1107,6 +1123,7 @@ function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
 
 function PinnedVideo({ feed }) {
   const videoRef = useRef(null);
+  const audioRef = useRef(null);
 
   const setVideoRef = useCallback((el) => {
     videoRef.current = el;
@@ -1116,25 +1133,38 @@ function PinnedVideo({ feed }) {
     }
   }, [feed.stream]);
 
+  const setAudioRef = useCallback((el) => {
+    audioRef.current = el;
+    if (el && feed.stream) {
+      el.srcObject = feed.stream;
+      el.play().catch(() => {});
+    }
+  }, [feed.stream]);
+
   useEffect(() => {
     const videoEl = videoRef.current;
-    if (!videoEl || !feed.stream) return;
+    const audioEl = audioRef.current;
+    if (!feed.stream) return;
 
-    if (videoEl.srcObject !== feed.stream) {
+    if (videoEl && videoEl.srcObject !== feed.stream) {
       videoEl.srcObject = feed.stream;
       videoEl.play().catch(() => {});
     }
+    if (audioEl && audioEl.srcObject !== feed.stream) {
+      audioEl.srcObject = feed.stream;
+      audioEl.play().catch(() => {});
+    }
 
     const handleTrackAdded = () => {
-      if (videoEl.paused) {
-        videoEl.play().catch(() => {});
-      }
+      if (videoEl?.paused) videoEl.play().catch(() => {});
+      if (audioEl?.paused) audioEl.play().catch(() => {});
     };
 
     feed.stream.addEventListener('addtrack', handleTrackAdded);
 
-    if (feed.stream.getTracks().length > 0 && videoEl.paused) {
-      videoEl.play().catch(() => {});
+    if (feed.stream.getTracks().length > 0) {
+      if (videoEl?.paused) videoEl.play().catch(() => {});
+      if (audioEl?.paused) audioEl.play().catch(() => {});
     }
 
     return () => {
@@ -1145,6 +1175,7 @@ function PinnedVideo({ feed }) {
   return (
     <div className="teams-pinned-video">
       <video ref={setVideoRef} autoPlay playsInline muted={feed.type === 'local'} />
+      {feed.type !== 'local' && <audio ref={setAudioRef} autoPlay />}
       <div className="teams-pinned-video__label"><span>{feed.display || 'Participant'}</span></div>
     </div>
   );
