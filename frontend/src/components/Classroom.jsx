@@ -260,16 +260,24 @@ export default function Classroom() {
     }
   }, [previewStream]);
 
-  // Attach local stream to video element once in-room view mounts
+  // Attach local stream to video element once in-room view mounts or after unpin
+  const localVideoRefCallback = useCallback((el) => {
+    localVideoRef.current = el;
+    if (el && localStreamRef.current) {
+      el.srcObject = localStreamRef.current;
+      el.play().catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     if (connected && localVideoRef.current && localStreamRef.current) {
       localVideoRef.current.srcObject = localStreamRef.current;
-      // Ensure playback resumes (e.g., after page visibility change in iframe)
+      // Ensure playback resumes (e.g., after unpin or page visibility change)
       if (localVideoRef.current.paused) {
         localVideoRef.current.play().catch(() => {});
       }
     }
-  }, [connected, localStreamReady]);
+  }, [connected, localStreamReady, pinnedFeed]);
 
   // Resume video playback when page becomes visible again (iframe embed scenario)
   useEffect(() => {
@@ -793,10 +801,10 @@ export default function Classroom() {
       <div className={gridClass}>
         {!(pinnedFeed?.type === 'local') && (
           <div className="teams-tile" id="local-video-tile">
-            <video ref={localVideoRef} autoPlay playsInline muted />
+            <video ref={localVideoRefCallback} autoPlay playsInline muted />
             <div className="teams-tile__label">
               <span className="teams-tile__name">{displayName.current}</span>
-              {isTrainer && <span className="teams-badge-role teams-badge-role--trainer">Trainer</span>}
+              {isTrainer && <span className="teams-badge-role teams-badge-role--trainer">Host</span>}
               {!micOn && <span className="teams-tile__muted"><IconMicOff /></span>}
             </div>
             {handRaised && <div className="teams-hand-badge"><IconHandRaise /></div>}
@@ -1046,18 +1054,29 @@ export default function Classroom() {
 function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
   const videoRef = useRef(null);
 
+  // Callback ref: assigns srcObject immediately when the element mounts,
+  // guaranteeing video plays even when the same stream object is reused
+  // after pin/unpin (where the component unmounts and remounts).
+  const setVideoRef = useCallback((el) => {
+    videoRef.current = el;
+    if (el && stream) {
+      el.srcObject = stream;
+      el.play().catch(() => {});
+    }
+  }, [stream]);
+
   useEffect(() => {
     const videoEl = videoRef.current;
     if (!videoEl || !stream) return;
 
-    // Set srcObject if it changed or is not set
+    // Re-assign if stream changed after initial mount
     if (videoEl.srcObject !== stream) {
       videoEl.srcObject = stream;
+      videoEl.play().catch(() => {});
     }
 
     // When tracks are added to a live MediaStream after srcObject is already
-    // assigned, some browsers won't auto-play the new tracks. Listen for
-    // addtrack to ensure the video starts playing.
+    // assigned, some browsers won't auto-play the new tracks.
     const handleTrackAdded = () => {
       if (videoEl.paused) {
         videoEl.play().catch(() => {});
@@ -1078,7 +1097,7 @@ function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
 
   return (
     <div className="teams-tile" id={`remote-${pubId}`}>
-      <video ref={videoRef} autoPlay playsInline />
+      <video ref={setVideoRef} autoPlay playsInline />
       <div className="teams-tile__label"><span className="teams-tile__name">{display || 'Participant'}</span></div>
       {handRaised && <div className="teams-hand-badge"><IconHandRaise /></div>}
       {onPin && <button className="teams-pin-btn" onClick={onPin} title="Pin"><IconPin /></button>}
@@ -1089,12 +1108,21 @@ function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
 function PinnedVideo({ feed }) {
   const videoRef = useRef(null);
 
+  const setVideoRef = useCallback((el) => {
+    videoRef.current = el;
+    if (el && feed.stream) {
+      el.srcObject = feed.stream;
+      el.play().catch(() => {});
+    }
+  }, [feed.stream]);
+
   useEffect(() => {
     const videoEl = videoRef.current;
     if (!videoEl || !feed.stream) return;
 
     if (videoEl.srcObject !== feed.stream) {
       videoEl.srcObject = feed.stream;
+      videoEl.play().catch(() => {});
     }
 
     const handleTrackAdded = () => {
@@ -1116,7 +1144,7 @@ function PinnedVideo({ feed }) {
 
   return (
     <div className="teams-pinned-video">
-      <video ref={videoRef} autoPlay playsInline muted={feed.type === 'local'} />
+      <video ref={setVideoRef} autoPlay playsInline muted={feed.type === 'local'} />
       <div className="teams-pinned-video__label"><span>{feed.display || 'Participant'}</span></div>
     </div>
   );
