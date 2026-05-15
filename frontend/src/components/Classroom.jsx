@@ -39,6 +39,7 @@ function resolveBackendUrl() {
 }
 
 const BACKEND_URL = resolveBackendUrl();
+const API_SHARED_SECRET = (import.meta.env.VITE_API_SHARED_SECRET || '').trim();
 
 function parseTokenPayload(token) {
   if (!token) return null;
@@ -116,6 +117,10 @@ export default function Classroom() {
   const userRole = hasValidToken ? tokenPayload.role : 'candidate';
   const isTrainer = userRole === 'trainer';
 
+  const [guestName, setGuestName] = useState('');
+  const [guestJoining, setGuestJoining] = useState(false);
+  const [guestError, setGuestError] = useState('');
+
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [sharing, setSharing] = useState(false);
@@ -180,6 +185,48 @@ export default function Classroom() {
       }, timeout);
     }
   }, []);
+
+  const handleGuestJoin = async (e) => {
+    e.preventDefault();
+    if (!guestName.trim()) return;
+    setGuestJoining(true);
+    setGuestError('');
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (API_SHARED_SECRET) {
+        headers['x-api-secret'] = API_SHARED_SECRET;
+      }
+      
+      const suffix = Math.random().toString(36).slice(2, 8);
+      const userId = `guest-${Date.now().toString(36)}-${suffix}`;
+      
+      const tokenResponse = await fetch(`${BACKEND_URL}/api/rooms/${roomId}/token`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          userId,
+          displayName: guestName.trim(),
+          role: 'candidate'
+        })
+      });
+
+      if (!tokenResponse.ok) {
+        const data = await tokenResponse.json().catch(() => ({}));
+        throw new Error(data.error || 'Unable to join as guest.');
+      }
+
+      const tokenData = await tokenResponse.json();
+      if (!tokenData?.success || !tokenData?.token) {
+        throw new Error('Invalid response from server.');
+      }
+      
+      navigate(`/room/${roomId}?token=${encodeURIComponent(tokenData.token)}`, { replace: true });
+    } catch (err) {
+      setGuestError(err.message);
+    } finally {
+      setGuestJoining(false);
+    }
+  };
 
   const stopStream = useCallback((stream) => {
     stream?.getTracks().forEach((track) => track.stop());
@@ -335,7 +382,9 @@ export default function Classroom() {
     async function prepareRoom() {
       try {
         if (!hasValidToken) {
-          throw new Error('A valid meeting token is required. Return to the dashboard and join again.');
+          setJoining(false);
+          setSetupStatus('Guest login required');
+          return;
         }
 
         const roomResponse = await fetch(`${BACKEND_URL}/api/rooms/${roomId}`);
@@ -860,6 +909,42 @@ export default function Classroom() {
       </div>
     );
   };
+
+  if (!hasValidToken) {
+    return (
+      <div className="teams-classroom teams-classroom--prejoin">
+        <button className="gm-back-link" onClick={() => navigate('/')}>
+          <IconBack /> Back
+        </button>
+        <div className="teams-prejoin-shell">
+          <div className="gm-prejoin-card" style={{ maxWidth: 400, padding: '40px 30px' }}>
+            <h2 style={{ marginBottom: 10, fontSize: '1.5rem', fontWeight: 600 }}>Join Meeting</h2>
+            <p style={{ margin: '0 0 24px', color: 'var(--text-secondary, #888)' }}>Please enter your name to join this session.</p>
+            <form onSubmit={handleGuestJoin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <input
+                type="text"
+                className="meet-join-input"
+                style={{ width: '100%', padding: '12px 16px', borderRadius: 8, border: '1px solid var(--border-color, #444)', background: 'var(--bg-secondary, #222)', color: '#fff', outline: 'none' }}
+                placeholder="Your name"
+                value={guestName}
+                onChange={e => setGuestName(e.target.value)}
+                autoFocus
+              />
+              <button 
+                type="submit" 
+                className="gm-join-btn" 
+                style={{ alignSelf: 'stretch', width: '100%' }}
+                disabled={!guestName.trim() || guestJoining}
+              >
+                {guestJoining ? 'Joining...' : 'Ask to Join'}
+              </button>
+              {guestError && <p className="gm-preview-error">{guestError}</p>}
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!connected) {
     return (

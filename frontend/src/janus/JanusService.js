@@ -114,7 +114,7 @@ function buildMediaConstraints(opts) {
 function buildPublisherTracks(opts) {
   return [
     { type: 'audio', capture: buildTrackCapture(opts.audio, opts.audioDeviceId) },
-    { type: 'video', capture: buildTrackCapture(opts.video, opts.videoDeviceId) }
+    { type: 'video', capture: buildTrackCapture(opts.video, opts.videoDeviceId), simulcast: !!opts.video }
   ];
 }
 
