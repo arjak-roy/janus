@@ -54,11 +54,19 @@ Subscriber role:
 Room creation defaults from backend Janus request:
 - `audiocodec: opus`
 - `videocodec: vp8`
-- `bitrate: 512000`
+- `bitrate: 1500000`
+- `bitrate_cap: false`
 - `fir_freq: 10`
 - `publishers: maxUsers || 6`
+- `playoutdelay_ext: true`
+- `transport_wide_cc_ext: true`
 
 These are applied when backend creates VideoRoom via Janus API.
+
+Publisher defaults from frontend Janus setup:
+- camera capture targets `1280x720` at up to `30fps`
+- VP8 simulcast is enabled for camera video
+- simulcast layer ceilings are `high: 1200000`, `medium: 500000`, `low: 150000`
 
 ## Publish Flow
 
@@ -73,9 +81,32 @@ These are applied when backend creates VideoRoom via Janus API.
 
 1. On room join or `event` updates, frontend receives publisher list.
 2. For each remote publisher, frontend attaches subscriber handle.
-3. Janus sends remote JSEP offer.
-4. Frontend creates subscriber answer and sends `start`.
-5. Remote tracks are added to a `MediaStream` and rendered in UI tiles.
+3. Subscriber joins using the `streams` API so Janus returns per-stream metadata, including subscriber mids.
+4. Janus sends remote JSEP offer.
+5. Frontend creates subscriber answer and sends `start`.
+6. Frontend requests the highest simulcast substream by default and re-applies it after reconnects.
+7. Remote tracks are added to a `MediaStream` and rendered in UI tiles.
+
+## Simulcast And Adaptive Quality
+
+Camera publishers use VP8 simulcast, and each subscriber independently requests the highest sustainable layer for that viewer's network conditions.
+
+Current receive policy:
+- start at the highest simulcast layer
+- downshift quickly on subscriber `slowLink` events or sustained poor stats
+- upshift only after several stable sampling intervals
+- re-apply the requested layer after subscriber ICE restart or renegotiation
+
+Current adaptation signals:
+- inbound bitrate derived from WebRTC stats
+- packet loss ratio
+- round-trip time from the selected ICE candidate pair
+- received frames per second
+
+Current layer thresholds:
+- degrade to `low` on severe congestion
+- degrade to `medium` on moderate congestion
+- return to `high` after sustained recovery
 
 ## Screen Share Flow
 

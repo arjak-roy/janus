@@ -393,6 +393,9 @@
   position: absolute;
   left: 12px;
   bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   padding: 4px 12px;
   border-radius: 4px;
   background: rgba(0,0,0,0.6);
@@ -548,6 +551,32 @@
 .teams-badge-role--trainer {
   background: rgba(251, 188, 4, 0.16);
   color: #fbbc04;
+}
+
+.teams-badge-quality {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.teams-badge-quality--high {
+  background: rgba(52, 168, 83, 0.2);
+  color: #81c995;
+}
+
+.teams-badge-quality--medium {
+  background: rgba(251, 188, 4, 0.2);
+  color: #fdd663;
+}
+
+.teams-badge-quality--low {
+  background: rgba(242, 139, 130, 0.2);
+  color: #f6aea9;
 }
 
 /* Hand-raise badge */

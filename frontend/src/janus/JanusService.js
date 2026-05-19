@@ -17,6 +17,31 @@ const JANUS_WS = import.meta.env.VITE_JANUS_WS_URL ||
   `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:${window.location.port}/janus-ws`;
 
 const IPV4_HOSTNAME_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const VIDEO_CAPTURE_CONSTRAINTS = Object.freeze({
+  width: { ideal: 1280, max: 1920 },
+  height: { ideal: 720, max: 1080 },
+  aspectRatio: { ideal: 16 / 9 },
+  frameRate: { ideal: 30, max: 30 }
+});
+const DEFAULT_SIMULCAST_MAX_BITRATES = Object.freeze({
+  high: 1200000,
+  medium: 500000,
+  low: 150000
+});
+const SIMULCAST_LAYERS = Object.freeze({
+  LOW: 0,
+  MEDIUM: 1,
+  HIGH: 2
+});
+const SIMULCAST_LAYER_NAMES = Object.freeze({
+  [SIMULCAST_LAYERS.LOW]: 'low',
+  [SIMULCAST_LAYERS.MEDIUM]: 'medium',
+  [SIMULCAST_LAYERS.HIGH]: 'high'
+});
+const DEFAULT_SUBSCRIBER_LAYER = SIMULCAST_LAYERS.HIGH;
+const DEFAULT_TEMPORAL_LAYER = 2;
+const DEFAULT_SIMULCAST_FALLBACK_USEC = 250000;
+const SUBSCRIBER_LAYER_COOLDOWN_MS = 1500;
 
 function resolveIceServers() {
   const fromEnv = import.meta.env.VITE_ICE_SERVERS_JSON;
@@ -98,24 +123,66 @@ function shouldRetryAudioOnly(err) {
   return err?.name === 'NotFoundError' || err?.name === 'OverconstrainedError';
 }
 
-function buildTrackCapture(enabled, deviceId) {
+function buildTrackCapture(enabled, deviceId, baseConstraints) {
   if (!enabled) return false;
-  if (!deviceId) return true;
-  return { deviceId: { exact: deviceId } };
+  const constraints = baseConstraints ? { ...baseConstraints } : {};
+  if (deviceId) {
+    constraints.deviceId = { exact: deviceId };
+  }
+  return Object.keys(constraints).length > 0 ? constraints : true;
+}
+
+function buildAudioTrackCapture(enabled, deviceId) {
+  return buildTrackCapture(enabled, deviceId);
+}
+
+function buildVideoTrackCapture(enabled, deviceId) {
+  return buildTrackCapture(enabled, deviceId, VIDEO_CAPTURE_CONSTRAINTS);
 }
 
 function buildMediaConstraints(opts) {
   return {
-    audio: buildTrackCapture(opts.audio, opts.audioDeviceId),
-    video: buildTrackCapture(opts.video, opts.videoDeviceId)
+    audio: buildAudioTrackCapture(opts.audio, opts.audioDeviceId),
+    video: buildVideoTrackCapture(opts.video, opts.videoDeviceId)
   };
 }
 
 function buildPublisherTracks(opts) {
   return [
-    { type: 'audio', capture: buildTrackCapture(opts.audio, opts.audioDeviceId) },
-    { type: 'video', capture: buildTrackCapture(opts.video, opts.videoDeviceId), simulcast: !!opts.video }
+    { type: 'audio', capture: buildAudioTrackCapture(opts.audio, opts.audioDeviceId), recv: false },
+    {
+      type: 'video',
+      capture: buildVideoTrackCapture(opts.video, opts.videoDeviceId),
+      recv: false,
+      simulcast: !!opts.video,
+      simulcastMaxBitrates: opts.video ? DEFAULT_SIMULCAST_MAX_BITRATES : undefined
+    }
   ];
+}
+
+function normalizeSubscriberLayer(layer) {
+  if (typeof layer === 'number' && Number.isInteger(layer) && layer >= SIMULCAST_LAYERS.LOW && layer <= SIMULCAST_LAYERS.HIGH) {
+    return layer;
+  }
+  if (typeof layer !== 'string') return null;
+
+  switch (layer.toLowerCase()) {
+    case 'low':
+      return SIMULCAST_LAYERS.LOW;
+    case 'medium':
+    case 'mid':
+    case 'normal':
+      return SIMULCAST_LAYERS.MEDIUM;
+    case 'high':
+      return SIMULCAST_LAYERS.HIGH;
+    default:
+      return null;
+  }
+}
+
+function pickVideoStream(streams) {
+  if (!Array.isArray(streams)) return null;
+  return streams.find((stream) => stream?.type === 'video' && stream?.send !== false && !stream?.disabled) || null;
 }
 
 class JanusService {
@@ -136,6 +203,7 @@ class JanusService {
     this.onRemoteGone = null;
     this.onChatMessage = null;
     this.onSignal = null;  // For custom signaling (hand raise, whiteboard sync, etc.)
+    this.onRemoteQualityChanged = null;
     this.onError = null;
 
     this._feeds = {};       // publisherId -> { rfid, stream }
@@ -146,6 +214,7 @@ class JanusService {
     // WebSocket for signaling (hand-raise, whiteboard)
     this.signalWs = null;
     this._signalWsReady = false;
+    this._currentRoom = null;
     this._currentRoomId = null;
   }
 
@@ -559,14 +628,236 @@ class JanusService {
     }
   }
 
+  _emitRemoteQualityChanged(publisherId) {
+    const feed = this._feeds[publisherId];
+    this.onRemoteQualityChanged?.(publisherId, feed ? this.getSubscriberLayerState(publisherId) : null);
+  }
+
+  _updateFeedStreams(publisherId, streams = []) {
+    const feed = this._feeds[publisherId];
+    if (!feed) return;
+
+    feed.streams = Array.isArray(streams) ? streams : [];
+    const videoStream = pickVideoStream(feed.streams);
+    if (videoStream) {
+      feed.videoMid = videoStream.mid || feed.videoMid || null;
+      feed.publisherVideoMid = videoStream.feed_mid || feed.publisherVideoMid || null;
+      feed.hasSimulcast = Boolean(videoStream.simulcast);
+    }
+
+    if (feed.videoMid) {
+      this.reapplySubscriberLayer(publisherId, 'stream-metadata');
+    }
+
+    this._emitRemoteQualityChanged(publisherId);
+  }
+
+  getSubscriberLayerState(publisherId) {
+    const feed = this._feeds[publisherId];
+    if (!feed) return null;
+
+    return {
+      publisherId,
+      videoMid: feed.videoMid || null,
+      requestedLayer: feed.requestedLayer,
+      requestedLayerName: SIMULCAST_LAYER_NAMES[feed.requestedLayer] || null,
+      currentLayer: feed.currentLayer,
+      currentLayerName: SIMULCAST_LAYER_NAMES[feed.currentLayer] || null,
+      requestedTemporalLayer: feed.requestedTemporalLayer,
+      currentTemporalLayer: feed.currentTemporalLayer,
+      hasSimulcast: !!feed.hasSimulcast,
+      lastQualityReason: feed.lastQualityReason || null,
+      lastLayerRequestAt: feed.lastLayerRequestAt || 0
+    };
+  }
+
+  async getSubscriberStats(publisherId) {
+    const feed = this._feeds[publisherId];
+    const pc = feed?.handle?.webrtcStuff?.pc;
+    if (!pc || typeof pc.getStats !== 'function') return null;
+
+    const report = await pc.getStats();
+    let inboundVideo = null;
+    let selectedCandidatePair = null;
+
+    report.forEach((stat) => {
+      if (
+        !inboundVideo &&
+        stat.type === 'inbound-rtp' &&
+        !stat.isRemote &&
+        (stat.kind === 'video' || stat.mediaType === 'video') &&
+        (!feed.videoMid || stat.mid === feed.videoMid)
+      ) {
+        inboundVideo = stat;
+      }
+
+      if (
+        !selectedCandidatePair &&
+        stat.type === 'candidate-pair' &&
+        (stat.nominated || stat.selected) &&
+        stat.state === 'succeeded'
+      ) {
+        selectedCandidatePair = stat;
+      }
+    });
+
+    if (!inboundVideo) {
+      report.forEach((stat) => {
+        if (!inboundVideo && stat.type === 'inbound-rtp' && !stat.isRemote && (stat.kind === 'video' || stat.mediaType === 'video')) {
+          inboundVideo = stat;
+        }
+      });
+    }
+
+    if (!inboundVideo) return null;
+
+    let bitrateText = null;
+    try {
+      bitrateText = typeof feed.handle?.getBitrate === 'function'
+        ? feed.handle.getBitrate(feed.videoMid)
+        : null;
+    } catch {
+      bitrateText = null;
+    }
+
+    return {
+      timestamp: inboundVideo.timestamp || Date.now(),
+      bytesReceived: inboundVideo.bytesReceived || 0,
+      packetsReceived: inboundVideo.packetsReceived || 0,
+      packetsLost: inboundVideo.packetsLost || 0,
+      framesDecoded: inboundVideo.framesDecoded || 0,
+      framesDropped: inboundVideo.framesDropped || 0,
+      framesPerSecond: inboundVideo.framesPerSecond || 0,
+      frameWidth: inboundVideo.frameWidth || 0,
+      frameHeight: inboundVideo.frameHeight || 0,
+      jitter: inboundVideo.jitter || 0,
+      currentRoundTripTime: selectedCandidatePair?.currentRoundTripTime ?? null,
+      availableIncomingBitrate: selectedCandidatePair?.availableIncomingBitrate ?? null,
+      bitrateText
+    };
+  }
+
+  setSubscriberQuality(publisherId, layer, options = {}) {
+    const normalizedLayer = normalizeSubscriberLayer(layer);
+    if (normalizedLayer === null) return false;
+    return this.setSubscriberLayer(publisherId, normalizedLayer, options);
+  }
+
+  setSubscriberLayer(publisherId, layer, options = {}) {
+    const feed = this._feeds[publisherId];
+    const normalizedLayer = normalizeSubscriberLayer(layer);
+    if (!feed || normalizedLayer === null) return false;
+
+    const targetTemporal = Number.isInteger(options.temporal)
+      ? Math.max(0, Math.min(2, options.temporal))
+      : (feed.requestedTemporalLayer ?? DEFAULT_TEMPORAL_LAYER);
+
+    feed.requestedLayer = normalizedLayer;
+    feed.requestedTemporalLayer = targetTemporal;
+    feed.lastQualityReason = options.reason || feed.lastQualityReason || null;
+
+    if (!feed.handle || !feed.videoMid) {
+      this._emitRemoteQualityChanged(publisherId);
+      return false;
+    }
+
+    const now = Date.now();
+    const layerIsUnchanged =
+      feed.lastAppliedLayer === normalizedLayer &&
+      feed.lastAppliedTemporalLayer === targetTemporal;
+
+    if (!options.force && layerIsUnchanged && now - (feed.lastLayerRequestAt || 0) < SUBSCRIBER_LAYER_COOLDOWN_MS) {
+      return false;
+    }
+
+    feed.lastLayerRequestAt = now;
+    feed.lastAppliedLayer = normalizedLayer;
+    feed.lastAppliedTemporalLayer = targetTemporal;
+
+    feed.handle.send({
+      message: {
+        request: 'configure',
+        streams: [{
+          mid: feed.videoMid,
+          substream: normalizedLayer,
+          temporal: targetTemporal,
+          fallback: options.fallback ?? DEFAULT_SIMULCAST_FALLBACK_USEC
+        }]
+      }
+    });
+
+    console.log(
+      `[JanusService] Requested ${SIMULCAST_LAYER_NAMES[normalizedLayer]} layer for ${feed.display || publisherId}`,
+      feed.videoMid,
+      options.reason ? `(${options.reason})` : ''
+    );
+    this._emitRemoteQualityChanged(publisherId);
+    return true;
+  }
+
+  reapplySubscriberLayer(publisherId, reason = 'reapply') {
+    const feed = this._feeds[publisherId];
+    if (!feed) return false;
+
+    return this.setSubscriberLayer(
+      publisherId,
+      feed.requestedLayer ?? DEFAULT_SUBSCRIBER_LAYER,
+      {
+        force: true,
+        temporal: feed.requestedTemporalLayer ?? DEFAULT_TEMPORAL_LAYER,
+        reason
+      }
+    );
+  }
+
+  stepDownSubscriberLayer(publisherId, reason = 'network-downshift') {
+    const feed = this._feeds[publisherId];
+    if (!feed) return false;
+
+    const currentLayer = normalizeSubscriberLayer(feed.requestedLayer) ?? DEFAULT_SUBSCRIBER_LAYER;
+    if (currentLayer <= SIMULCAST_LAYERS.LOW) return false;
+    return this.setSubscriberLayer(publisherId, currentLayer - 1, { reason });
+  }
+
+  stepUpSubscriberLayer(publisherId, reason = 'network-upshift') {
+    const feed = this._feeds[publisherId];
+    if (!feed) return false;
+
+    const currentLayer = normalizeSubscriberLayer(feed.requestedLayer) ?? DEFAULT_SUBSCRIBER_LAYER;
+    if (currentLayer >= SIMULCAST_LAYERS.HIGH) return false;
+    return this.setSubscriberLayer(publisherId, currentLayer + 1, { reason });
+  }
+
   // ── Subscribe to a remote publisher ─────────────────────
   _subscribeToFeed(publisherId, display) {
     this.janus.attach({
       plugin: 'janus.plugin.videoroom',
       success: (handle) => {
-        this._feeds[publisherId] = { handle, display, stream: null };
+        this._feeds[publisherId] = {
+          handle,
+          display,
+          stream: null,
+          streams: [],
+          videoMid: null,
+          publisherVideoMid: null,
+          hasSimulcast: false,
+          requestedLayer: DEFAULT_SUBSCRIBER_LAYER,
+          currentLayer: null,
+          requestedTemporalLayer: DEFAULT_TEMPORAL_LAYER,
+          currentTemporalLayer: null,
+          lastLayerRequestAt: 0,
+          lastAppliedLayer: null,
+          lastAppliedTemporalLayer: null,
+          lastQualityReason: 'initial-high'
+        };
         handle.send({
-          message: { request: 'join', room: this._currentRoom, ptype: 'subscriber', feed: publisherId }
+          message: {
+            request: 'join',
+            room: this._currentRoom,
+            ptype: 'subscriber',
+            private_id: this.myPrivateId,
+            streams: [{ feed: publisherId }]
+          }
         });
       },
       error: (err) => console.error('Subscribe attach error:', err),
@@ -582,11 +873,37 @@ class JanusService {
       },
       webrtcState: (isConnected) => {
         console.log(`[JanusService] Subscriber WebRTC state (${display}):`, isConnected ? 'up' : 'down');
+        if (isConnected) {
+          this.reapplySubscriberLayer(publisherId, 'subscriber-webrtc-up');
+        }
       },
       slowLink: (uplink, lost) => {
         console.warn(`[JanusService] Subscriber slow link (${display}): uplink=${uplink}, lost=${lost}`);
+        if (!uplink) {
+          this.stepDownSubscriberLayer(publisherId, `slow-link:${lost}`);
+        }
       },
       onmessage: (msg, jsep) => {
+        if (Array.isArray(msg?.streams)) {
+          this._updateFeedStreams(publisherId, msg.streams);
+        }
+
+        if (typeof msg?.substream === 'number') {
+          const feed = this._feeds[publisherId];
+          if (feed) {
+            feed.currentLayer = msg.substream;
+          }
+        }
+
+        if (typeof msg?.temporal === 'number') {
+          const feed = this._feeds[publisherId];
+          if (feed) {
+            feed.currentTemporalLayer = msg.temporal;
+          }
+        }
+
+        this._emitRemoteQualityChanged(publisherId);
+
         if (jsep) {
           const handle = this._feeds[publisherId]?.handle;
           handle?.createAnswer({
@@ -595,6 +912,9 @@ class JanusService {
             media: { audioSend: false, videoSend: false },
             success: (answerJsep) => {
               handle.send({ message: { request: 'start' }, jsep: answerJsep });
+              window.setTimeout(() => {
+                this.reapplySubscriberLayer(publisherId, 'subscriber-start');
+              }, 0);
             },
             error: (err) => {
               console.error(`[JanusService] Subscriber createAnswer error (${display}):`, err);
@@ -605,6 +925,12 @@ class JanusService {
       onremotetrack: (track, mid, on) => {
         if (!this._feeds[publisherId]) return;
         if (on) {
+          if (track.kind === 'video' && mid) {
+            this._feeds[publisherId].videoMid = mid;
+            window.setTimeout(() => {
+              this.reapplySubscriberLayer(publisherId, 'video-track-added');
+            }, 0);
+          }
           if (!this._feeds[publisherId].stream) {
             this._feeds[publisherId].stream = new MediaStream();
           }
@@ -634,6 +960,7 @@ class JanusService {
       oncleanup: () => {
         this.onRemoteGone?.(publisherId);
         delete this._feeds[publisherId];
+        this._emitRemoteQualityChanged(publisherId);
       }
     });
   }
@@ -930,6 +1257,8 @@ class JanusService {
       this.signalWs = null;
     }
     this._signalWsReady = false;
+    this._currentRoom = null;
+    this._currentRoomId = null;
 
     // Stop local camera/mic tracks to release the camera
     if (this.myStream) {

@@ -46,10 +46,13 @@ export class JanusApiService {
           room: roomId,
           description: roomConfig.name || `Room ${roomId}`,
           publishers: roomConfig.maxUsers || 6,
-          bitrate: 384000,
+          bitrate: 1500000,
+          bitrate_cap: false,
           fir_freq: 10,
           audiocodec: 'opus',
           videocodec: 'vp8',
+          playoutdelay_ext: true,
+          transport_wide_cc_ext: true,
           is_private: roomConfig.isPrivate || false
         };
       } else if (plugin === 'janus.plugin.textroom') {

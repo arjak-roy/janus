@@ -40,6 +40,10 @@ function resolveBackendUrl() {
 
 const BACKEND_URL = resolveBackendUrl();
 const API_SHARED_SECRET = (import.meta.env.VITE_API_SHARED_SECRET || '').trim();
+const QUALITY_LAYER_ORDER = Object.freeze({ low: 0, medium: 1, high: 2 });
+const ADAPTIVE_QUALITY_INTERVAL_MS = 3000;
+const ADAPTIVE_DOWNSHIFT_TICKS = 2;
+const ADAPTIVE_UPSHIFT_TICKS = 4;
 
 function parseTokenPayload(token) {
   if (!token) return null;
@@ -105,6 +109,42 @@ async function enumerateInputDevices() {
   };
 }
 
+function getDisplayedQualityName(qualityState) {
+  return qualityState?.currentLayerName || qualityState?.requestedLayerName || null;
+}
+
+function toQualityLabel(qualityName) {
+  if (!qualityName) return null;
+  return qualityName.charAt(0).toUpperCase() + qualityName.slice(1);
+}
+
+function recommendSubscriberQuality({ bitrateBps, availableIncomingBitrate, lossRatio, roundTripTime, framesPerSecond }) {
+  const availableBps = Number.isFinite(availableIncomingBitrate) ? availableIncomingBitrate : null;
+  const fps = Number.isFinite(framesPerSecond) ? framesPerSecond : 0;
+
+  if (
+    (bitrateBps !== null && bitrateBps < 250000) ||
+    (availableBps !== null && availableBps < 300000) ||
+    lossRatio >= 0.08 ||
+    roundTripTime >= 0.35 ||
+    (fps > 0 && fps < 10)
+  ) {
+    return 'low';
+  }
+
+  if (
+    (bitrateBps !== null && bitrateBps < 700000) ||
+    (availableBps !== null && availableBps < 900000) ||
+    lossRatio >= 0.03 ||
+    roundTripTime >= 0.18 ||
+    (fps > 0 && fps < 20)
+  ) {
+    return 'medium';
+  }
+
+  return 'high';
+}
+
 export default function Classroom() {
   const { roomId } = useParams();
   const [searchParams] = useSearchParams();
@@ -154,9 +194,11 @@ export default function Classroom() {
   const seenMessageKeysRef = useRef(new Set());
 
   const [remoteFeeds, setRemoteFeeds] = useState({});
+  const [remoteQualityState, setRemoteQualityState] = useState({});
   const [screenShareFeeds, setScreenShareFeeds] = useState({});
   const localVideoRef = useRef(null);
   const localStreamRef = useRef(null);
+  const adaptiveQualitySamplesRef = useRef({});
 
   const [handRaised, setHandRaised] = useState(false);
   const [raisedHands, setRaisedHands] = useState({});
@@ -364,6 +406,7 @@ export default function Classroom() {
     setShowWhiteboard(false);
     setPinnedFeed(null);
     setRemoteFeeds({});
+    setRemoteQualityState({});
     setScreenShareFeeds({});
     setRaisedHands({});
     setHandRaised(false);
@@ -376,7 +419,9 @@ export default function Classroom() {
     setSelectedVideoDeviceId('');
     setDevicesLoading(false);
     setSetupStatus('Checking meeting availability');
+    adaptiveQualitySamplesRef.current = {};
     stopPreview();
+    janusService.onRemoteQualityChanged = null;
     janusService.destroy();
 
     async function prepareRoom() {
@@ -414,6 +459,7 @@ export default function Classroom() {
     return () => {
       cancelled = true;
       stopPreview();
+      janusService.onRemoteQualityChanged = null;
       janusService.destroy();
     };
   }, [hasValidToken, roomId, setupAttempt, stopPreview]);
@@ -622,7 +668,14 @@ export default function Classroom() {
         setRemoteFeeds((previous) => ({ ...previous, [publisherId]: { display, stream, _ts: Date.now() } }));
       };
       janusService.onRemoteGone = (publisherId) => {
+        delete adaptiveQualitySamplesRef.current[publisherId];
         setRemoteFeeds((previous) => {
+          const next = { ...previous };
+          delete next[publisherId];
+          return next;
+        });
+        setRemoteQualityState((previous) => {
+          if (!(publisherId in previous)) return previous;
           const next = { ...previous };
           delete next[publisherId];
           return next;
@@ -631,6 +684,28 @@ export default function Classroom() {
           const next = { ...previous };
           delete next[publisherId];
           return next;
+        });
+      };
+      janusService.onRemoteQualityChanged = (publisherId, qualityState) => {
+        setRemoteQualityState((previous) => {
+          if (!qualityState) {
+            if (!(publisherId in previous)) return previous;
+            const next = { ...previous };
+            delete next[publisherId];
+            return next;
+          }
+
+          const existing = previous[publisherId];
+          if (
+            existing?.requestedLayerName === qualityState.requestedLayerName &&
+            existing?.currentLayerName === qualityState.currentLayerName &&
+            existing?.videoMid === qualityState.videoMid &&
+            existing?.hasSimulcast === qualityState.hasSimulcast
+          ) {
+            return previous;
+          }
+
+          return { ...previous, [publisherId]: qualityState };
         });
       };
       janusService.onChatMessage = (message) => appendUniqueMessages([message]);
@@ -694,6 +769,101 @@ export default function Classroom() {
       cancelled = true;
     };
   }, [appendUniqueMessages, connected, roomId]);
+
+  useEffect(() => {
+    if (!connected) return;
+
+    let cancelled = false;
+    let sampling = false;
+
+    const sampleSubscriberQuality = async () => {
+      if (cancelled || sampling || document.visibilityState !== 'visible') return;
+      sampling = true;
+
+      try {
+        const activePublisherIds = Array.from(new Set([
+          ...Object.keys(remoteFeeds),
+          ...Object.keys(screenShareFeeds)
+        ]));
+        const activeSet = new Set(activePublisherIds.map(String));
+
+        Object.keys(adaptiveQualitySamplesRef.current).forEach((key) => {
+          if (!activeSet.has(key)) {
+            delete adaptiveQualitySamplesRef.current[key];
+          }
+        });
+
+        for (const publisherId of activePublisherIds) {
+          const qualityState = janusService.getSubscriberLayerState(publisherId);
+          if (!qualityState?.hasSimulcast || !qualityState.videoMid) {
+            continue;
+          }
+
+          const stats = await janusService.getSubscriberStats(publisherId).catch(() => null);
+          if (!stats || cancelled) continue;
+
+          const sampleKey = String(publisherId);
+          const previous = adaptiveQualitySamplesRef.current[sampleKey];
+          const timestamp = Number(stats.timestamp) || Date.now();
+          const bitrateBps = previous && timestamp > previous.timestamp
+            ? Math.max(0, ((stats.bytesReceived - previous.bytesReceived) * 8000) / (timestamp - previous.timestamp))
+            : null;
+          const totalPackets = (stats.packetsReceived || 0) + (stats.packetsLost || 0);
+          const lossRatio = totalPackets > 0 ? stats.packetsLost / totalPackets : 0;
+          const roundTripTime = stats.currentRoundTripTime ?? 0;
+          const recommendedQuality = recommendSubscriberQuality({
+            bitrateBps,
+            availableIncomingBitrate: stats.availableIncomingBitrate,
+            lossRatio,
+            roundTripTime,
+            framesPerSecond: stats.framesPerSecond || 0,
+          });
+          const currentQuality = getDisplayedQualityName(qualityState) || 'high';
+
+          let downshiftTicks = 0;
+          let upshiftTicks = 0;
+
+          if (QUALITY_LAYER_ORDER[recommendedQuality] < QUALITY_LAYER_ORDER[currentQuality]) {
+            downshiftTicks = (previous?.downshiftTicks || 0) + 1;
+          } else if (QUALITY_LAYER_ORDER[recommendedQuality] > QUALITY_LAYER_ORDER[currentQuality]) {
+            upshiftTicks = (previous?.upshiftTicks || 0) + 1;
+          }
+
+          if (downshiftTicks >= ADAPTIVE_DOWNSHIFT_TICKS) {
+            janusService.setSubscriberQuality(publisherId, recommendedQuality, {
+              reason: `adaptive-down:${Math.round(lossRatio * 100)}pct-loss`
+            });
+            downshiftTicks = 0;
+          } else if (upshiftTicks >= ADAPTIVE_UPSHIFT_TICKS) {
+            janusService.setSubscriberQuality(publisherId, recommendedQuality, {
+              reason: 'adaptive-up:stable-network'
+            });
+            upshiftTicks = 0;
+          }
+
+          adaptiveQualitySamplesRef.current[sampleKey] = {
+            timestamp,
+            bytesReceived: stats.bytesReceived,
+            downshiftTicks,
+            upshiftTicks,
+            lastBitrateBps: bitrateBps,
+            lastRecommendedQuality: recommendedQuality,
+          };
+        }
+      } finally {
+        sampling = false;
+      }
+    };
+
+    sampleSubscriberQuality();
+    const timer = window.setInterval(sampleSubscriberQuality, ADAPTIVE_QUALITY_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      sampling = false;
+      window.clearInterval(timer);
+    };
+  }, [connected, remoteFeeds, screenShareFeeds]);
 
   useEffect(() => {
     if (activeSidebar === 'chat') chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -823,6 +993,9 @@ export default function Classroom() {
 
   const remoteEntries = Object.entries(remoteFeeds);
   const screenShareEntries = Object.entries(screenShareFeeds);
+  const pinnedQuality = pinnedFeed?.type !== 'local' && pinnedFeed?.pubId
+    ? remoteQualityState[pinnedFeed.pubId] || null
+    : null;
   const totalFeeds = 1 + remoteEntries.length;
   const hasPresentation = showWhiteboard || sharing || screenShareEntries.length > 0 || pinnedFeed !== null;
   const raisedHandCount = Object.keys(raisedHands).length + (handRaised ? 1 : 0);
@@ -904,7 +1077,15 @@ export default function Classroom() {
           </div>
         )}
         {filteredRemote.map(([publisherId, { display, stream }]) => (
-          <RemoteVideo key={publisherId} pubId={publisherId} display={display} stream={stream} handRaised={!!raisedHands[normalizeHandKey(display)]} onPin={() => handlePin({ type: 'remote', pubId: publisherId, display, stream })} />
+          <RemoteVideo
+            key={publisherId}
+            pubId={publisherId}
+            display={display}
+            stream={stream}
+            quality={remoteQualityState[publisherId]}
+            handRaised={!!raisedHands[normalizeHandKey(display)]}
+            onPin={() => handlePin({ type: 'remote', pubId: publisherId, display, stream })}
+          />
         ))}
       </div>
     );
@@ -1060,13 +1241,20 @@ export default function Classroom() {
             )}
             {pinnedFeed && !showWhiteboard && (
               <div className="teams-pinned">
-                <PinnedVideo feed={pinnedFeed} />
+                <PinnedVideo feed={pinnedFeed} quality={pinnedQuality} />
                 <button className="teams-unpin-btn" onClick={handleUnpin}><IconUnpin /> Unpin</button>
               </div>
             )}
             {!pinnedFeed && !showWhiteboard && screenShareEntries.map(([publisherId, { display, stream }]) => (
               <div key={`screen-${publisherId}`} className="teams-pinned">
-                <RemoteVideo pubId={publisherId} display={display} stream={stream} handRaised={false} onPin={() => handlePin({ type: 'screen', pubId: publisherId, display, stream })} />
+                <RemoteVideo
+                  pubId={publisherId}
+                  display={display}
+                  stream={stream}
+                  quality={remoteQualityState[publisherId]}
+                  handRaised={false}
+                  onPin={() => handlePin({ type: 'screen', pubId: publisherId, display, stream })}
+                />
               </div>
             ))}
           </div>
@@ -1175,9 +1363,11 @@ export default function Classroom() {
   );
 }
 
-function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
+function RemoteVideo({ pubId, display, stream, quality, handRaised, onPin }) {
   const videoRef = useRef(null);
   const audioRef = useRef(null);
+  const qualityName = getDisplayedQualityName(quality);
+  const qualityLabel = toQualityLabel(qualityName);
 
   // Callback ref: assigns srcObject immediately when the element mounts,
   // guaranteeing video plays even when the same stream object is reused
@@ -1238,16 +1428,21 @@ function RemoteVideo({ pubId, display, stream, handRaised, onPin }) {
     <div className="teams-tile" id={`remote-${pubId}`}>
       <video ref={setVideoRef} autoPlay playsInline />
       <audio ref={setAudioRef} autoPlay />
-      <div className="teams-tile__label"><span className="teams-tile__name">{display || 'Participant'}</span></div>
+      <div className="teams-tile__label">
+        <span className="teams-tile__name">{display || 'Participant'}</span>
+        {qualityLabel && <span className={`teams-badge-quality teams-badge-quality--${qualityName}`}>{qualityLabel}</span>}
+      </div>
       {handRaised && <div className="teams-hand-badge"><IconHandRaise /></div>}
       {onPin && <button className="teams-pin-btn" onClick={onPin} title="Pin"><IconPin /></button>}
     </div>
   );
 }
 
-function PinnedVideo({ feed }) {
+function PinnedVideo({ feed, quality }) {
   const videoRef = useRef(null);
   const audioRef = useRef(null);
+  const qualityName = getDisplayedQualityName(quality);
+  const qualityLabel = toQualityLabel(qualityName);
 
   const setVideoRef = useCallback((el) => {
     videoRef.current = el;
@@ -1300,7 +1495,10 @@ function PinnedVideo({ feed }) {
     <div className="teams-pinned-video">
       <video ref={setVideoRef} autoPlay playsInline muted={feed.type === 'local'} />
       {feed.type !== 'local' && <audio ref={setAudioRef} autoPlay />}
-      <div className="teams-pinned-video__label"><span>{feed.display || 'Participant'}</span></div>
+      <div className="teams-pinned-video__label">
+        <span>{feed.display || 'Participant'}</span>
+        {qualityLabel && <span className={`teams-badge-quality teams-badge-quality--${qualityName}`}>{qualityLabel}</span>}
+      </div>
     </div>
   );
 }
